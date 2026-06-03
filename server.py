@@ -21,18 +21,21 @@ def send_telegram(message):
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
+    print("TOKEN:", token)
+    print("CHAT_ID:", chat_id)
+
     if not token or not chat_id:
         print("Missing Telegram env vars")
         return
 
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        requests.post(url, data={
-            "chat_id": chat_id,
-            "text": message
-        })
-    except Exception as e:
-        print("Telegram error:", e)
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    r = requests.post(url, data={
+        "chat_id": chat_id,
+        "text": message
+    })
+
+    print("Telegram response:", r.text)
 
 # =========================
 # NEWS RISK ENGINE
