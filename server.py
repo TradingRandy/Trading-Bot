@@ -8,7 +8,6 @@ app = Flask(__name__)
 # =========================
 # STATE
 # =========================
-history = []
 price_history = []
 
 last_signal_time = 0
@@ -38,72 +37,76 @@ def send(msg):
 
 
 # =========================
+# PRICE TRACKING
+# =========================
+def update_price(price):
+    price_history.append(price)
+    if len(price_history) > 100:
+        price_history.pop(0)
+
+
+# =========================
 # NEWS (REAL FINNHUB)
 # =========================
 def news_risk():
     api_key = os.environ.get("NEWS_API_KEY")
 
     if not api_key:
-        return "SAFE"
+        return 0
 
     try:
         url = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
         data = requests.get(url, timeout=5).json()
 
-        risky_words = [
-            "CPI", "inflation", "Fed",
-            "interest rate", "NFP",
-            "unemployment", "rate hike"
-        ]
+        high = ["CPI", "Fed", "NFP", "interest rate"]
+        medium = ["inflation", "unemployment", "GDP"]
 
-        for article in data[:15]:
-            headline = article.get("headline", "")
-            if any(w.lower() in headline.lower() for w in risky_words):
-                return "RISKY"
+        score = 0
 
-        return "SAFE"
+        for n in data[:20]:
+            headline = n.get("headline", "").lower()
+
+            for w in high:
+                if w.lower() in headline:
+                    score += 3
+
+            for w in medium:
+                if w.lower() in headline:
+                    score += 1
+
+        return score
 
     except:
-        return "SAFE"
+        return 0
 
 
 # =========================
-# PRICE SOURCE (TRADINGVIEW)
+# VOLATILITY (REAL RANGE)
 # =========================
-def update_price(price):
-    price_history.append(price)
-    if len(price_history) > 50:
-        price_history.pop(0)
-
-
-# =========================
-# VOLATILITY (REAL RANGE BASED)
-# =========================
-def volatility(price):
-
+def volatility_score():
     if len(price_history) < 10:
-        return "NORMAL"
+        return 1
 
     high = max(price_history[-10:])
     low = min(price_history[-10:])
+    avg = sum(price_history[-10:]) / 10
 
-    rng = high - low
+    rng = (high - low) / avg
 
-    if rng > price * 0.005:
-        return "HIGH"
+    if rng > 0.006:
+        return 3  # too volatile
 
-    if rng < price * 0.002:
-        return "LOW"
+    if rng < 0.0015:
+        return 2  # dead market
 
-    return "NORMAL"
+    return 0  # optimal
 
 
 # =========================
-# STRUCTURE BIAS
+# STRUCTURE
 # =========================
-def bias():
-
-    if len(price_history) < 10:
+def structure():
+    if len(price_history) < 6:
         return "NEUTRAL"
 
     if price_history[-1] > price_history[-5]:
@@ -116,27 +119,27 @@ def bias():
 
 
 # =========================
-# LIQUIDITY LOGIC (SIMPLE BUT REAL)
+# LIQUIDITY LOGIC
 # =========================
-def liquidity_signal(price):
+def liquidity(price):
 
     if len(price_history) < 5:
         return "NONE"
 
-    last_high = max(price_history[-5:])
-    last_low = min(price_history[-5:])
+    high = max(price_history[-5:])
+    low = min(price_history[-5:])
 
-    if price > last_high:
+    if price > high:
         return "BUY_SIDE_SWEEP"
 
-    if price < last_low:
+    if price < low:
         return "SELL_SIDE_SWEEP"
 
     return "NONE"
 
 
 # =========================
-# SIGNAL ENGINE
+# SIGNAL ENGINE (SMART MONEY PRO)
 # =========================
 def signal(price):
 
@@ -145,11 +148,15 @@ def signal(price):
     score = 50
     direction = None
 
-    sweep = liquidity_signal(price)
-    b = bias()
-    vol = volatility(price)
+    sweep = liquidity(price)
+    struct = structure()
 
-    # liquidity logic
+    news = news_risk()
+    vol = volatility_score()
+
+    # =====================
+    # LIQUIDITY
+    # =====================
     if sweep == "BUY_SIDE_SWEEP":
         score += 35
         direction = "SHORT"
@@ -161,30 +168,44 @@ def signal(price):
     else:
         score -= 10
 
-    # bias confirmation
-    if b == "BULLISH" and direction == "LONG":
-        score += 15
+    # =====================
+    # STRUCTURE
+    # =====================
+    if struct == "BULLISH" and direction == "LONG":
+        score += 20
 
-    if b == "BEARISH" and direction == "SHORT":
-        score += 15
+    if struct == "BEARISH" and direction == "SHORT":
+        score += 20
 
-    if b == "RANGE":
-        score -= 10
-
-    # volatility filter
-    if vol == "HIGH":
+    if struct == "RANGE":
         score -= 5
 
-    # news filter
-    if news_risk() == "RISKY":
+    # =====================
+    # NEWS FILTER
+    # =====================
+    if news >= 6:
         return "BLOCKED (NEWS)", score
 
-    # final decision
-    if score >= 80:
-        return f"A+ {direction} (PRO)", score
+    if news >= 3:
+        score -= 15
 
-    if score >= 65:
-        return f"B {direction}", score
+    # =====================
+    # VOLATILITY FILTER
+    # =====================
+    if vol == 3:
+        return "BLOCKED (VOLATILITY)", score
+
+    if vol == 2:
+        score -= 10
+
+    # =====================
+    # FINAL DECISION
+    # =====================
+    if score >= 85:
+        return f"A+ SMART MONEY {direction}", score
+
+    if score >= 70:
+        return f"B SETUP {direction}", score
 
     return "NO TRADE", score
 
@@ -205,6 +226,7 @@ def webhook():
     price = float(data.get("price", 0))
     symbol = data.get("symbol", "XAUUSD")
     tv_signal = data.get("signal", "TV")
+    timestamp = data.get("time", "N/A")
 
     now = time.time()
 
@@ -220,20 +242,20 @@ def webhook():
     last_signal_time = now
 
     send(f"""
-🏦 REAL DATA ENGINE
+🏦 SMART MONEY PRO ENGINE
 
 Symbol: {symbol}
 TV Signal: {tv_signal}
-
 Price: {price}
+Time: {timestamp}
 
 Signal: {sig}
 Score: {score}
 
-Bias: {bias()}
-Volatility: {volatility(price)}
-Liquidity: {liquidity_signal(price)}
-News: {news_risk()}
+Structure: {structure()}
+Liquidity: {liquidity(price)}
+Volatility: {volatility_score()}
+News Risk: {news}
 """)
 
     return "ok", 200
@@ -244,7 +266,7 @@ News: {news_risk()}
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 SYSTEM ONLINE")
+    send("🧪 SMART MONEY SYSTEM ONLINE")
     return "ok"
 
 
