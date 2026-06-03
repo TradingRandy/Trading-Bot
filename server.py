@@ -6,9 +6,10 @@ from flask import Flask, request
 app = Flask(__name__)
 
 # =========================
-# STATE
+# STATE (HEDGE FUND DASHBOARD CORE)
 # =========================
 price_history = []
+trade_log = []
 
 last_signal_time = 0
 last_signal = None
@@ -32,25 +33,24 @@ def send(msg):
             data={"chat_id": chat_id, "text": msg},
             timeout=5
         )
-    except Exception as e:
-        print("Telegram error:", e)
+    except:
+        pass
 
 
 # =========================
-# PRICE TRACKING (TRADINGVIEW)
+# PRICE FEED (TRADINGVIEW)
 # =========================
 def update_price(price):
     price_history.append(price)
-    if len(price_history) > 100:
+    if len(price_history) > 200:
         price_history.pop(0)
 
 
 # =========================
-# NEWS ENGINE (REAL FINNHUB)
+# NEWS ENGINE (REAL)
 # =========================
 def news_risk():
     api_key = os.environ.get("NEWS_API_KEY")
-
     if not api_key:
         return 0
 
@@ -59,7 +59,7 @@ def news_risk():
         data = requests.get(url, timeout=5).json()
 
         high = ["CPI", "Fed", "NFP", "interest rate"]
-        medium = ["inflation", "GDP", "unemployment"]
+        med = ["inflation", "GDP", "unemployment"]
 
         score = 0
 
@@ -70,7 +70,7 @@ def news_risk():
                 if w.lower() in h:
                     score += 3
 
-            for w in medium:
+            for w in med:
                 if w.lower() in h:
                     score += 1
 
@@ -81,7 +81,7 @@ def news_risk():
 
 
 # =========================
-# VOLATILITY (REAL RANGE MODEL)
+# VOLATILITY ENGINE
 # =========================
 def volatility():
     if len(price_history) < 10:
@@ -94,19 +94,16 @@ def volatility():
     rng = (high - low) / avg
 
     if rng > 0.006:
-        return 3  # too volatile
-
+        return 3
     if rng < 0.0015:
-        return 2  # dead market
-
-    return 0  # optimal
+        return 2
+    return 0
 
 
 # =========================
-# MARKET STRUCTURE
+# STRUCTURE (BOS SIMPLIFIED)
 # =========================
 def structure():
-
     if len(price_history) < 6:
         return "NEUTRAL"
 
@@ -120,10 +117,9 @@ def structure():
 
 
 # =========================
-# LIQUIDITY SWEEP LOGIC
+# LIQUIDITY MODEL
 # =========================
 def liquidity(price):
-
     if len(price_history) < 5:
         return "NONE"
 
@@ -140,26 +136,30 @@ def liquidity(price):
 
 
 # =========================
-# FAIR VALUE CONTEXT (SIMPLIFIED)
+# PERFORMANCE DASHBOARD (HEDGE FUND STYLE)
 # =========================
-def fvg(price):
+def stats():
 
-    if len(price_history) < 10:
-        return "NONE"
+    if not trade_log:
+        return {
+            "trades": 0,
+            "winrate": 0,
+            "avg_score": 0
+        }
 
-    avg = sum(price_history[-10:]) / 10
+    wins = len([t for t in trade_log if "A+" in t["signal"]])
+    total = len(trade_log)
+    avg_score = sum([t["score"] for t in trade_log]) / total
 
-    if price > avg * 1.002:
-        return "OVEREXTENDED"
-
-    if price < avg * 0.998:
-        return "DISCOUNT"
-
-    return "BALANCED"
+    return {
+        "trades": total,
+        "winrate": round((wins / total) * 100, 2),
+        "avg_score": round(avg_score, 2)
+    }
 
 
 # =========================
-# SIGNAL ENGINE (SMART MONEY PRO MAX)
+# SIGNAL ENGINE (HEDGE FUND STYLE)
 # =========================
 def signal(price):
 
@@ -170,10 +170,8 @@ def signal(price):
 
     sweep = liquidity(price)
     struct = structure()
-    fv = fvg(price)
-
-    news = news_risk()
     vol = volatility()
+    news = news_risk()
 
     # =====================
     # LIQUIDITY
@@ -202,15 +200,6 @@ def signal(price):
         score -= 5
 
     # =====================
-    # FAIR VALUE
-    # =====================
-    if fv == "OVEREXTENDED" and direction == "SHORT":
-        score += 10
-
-    if fv == "DISCOUNT" and direction == "LONG":
-        score += 10
-
-    # =====================
     # NEWS FILTER
     # =====================
     if news >= 6:
@@ -223,7 +212,7 @@ def signal(price):
     # VOLATILITY FILTER
     # =====================
     if vol == 3:
-        return "BLOCKED (VOLATILITY)", score
+        return "BLOCKED (VOL)", score
 
     if vol == 2:
         score -= 10
@@ -241,7 +230,15 @@ def signal(price):
 
 
 # =========================
-# WEBHOOK (TRADINGVIEW)
+# DASHBOARD HOME
+# =========================
+@app.route("/")
+def home():
+    return "HEDGE FUND DASHBOARD ACTIVE"
+
+
+# =========================
+# TRADINGVIEW WEBHOOK
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -249,7 +246,6 @@ def webhook():
     global last_signal_time, last_signal
 
     data = request.get_json(silent=True)
-
     if not data:
         return "no data", 400
 
@@ -271,11 +267,18 @@ def webhook():
     last_signal = sig
     last_signal_time = now
 
+    trade_log.append({
+        "time": now,
+        "price": price,
+        "signal": sig,
+        "score": score
+    })
+
     send(f"""
-🏦 SMART MONEY PRO MAX ENGINE
+📊 HEDGE FUND DASHBOARD SIGNAL
 
 Symbol: {symbol}
-TV Signal: {tv_signal}
+TV: {tv_signal}
 Price: {price}
 Time: {timestamp}
 
@@ -284,12 +287,24 @@ Score: {score}
 
 Structure: {structure()}
 Liquidity: {liquidity(price)}
-FVG: {fvg(price)}
 Volatility: {volatility()}
-News Risk: {news}
+News Risk: {news_risk()}
+
+📈 Stats:
+Trades: {stats()['trades']}
+Winrate: {stats()['winrate']}%
+Avg Score: {stats()['avg_score']}
 """)
 
     return "ok", 200
+
+
+# =========================
+# STATS API
+# =========================
+@app.route("/stats")
+def get_stats():
+    return stats()
 
 
 # =========================
@@ -297,7 +312,7 @@ News Risk: {news}
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 SMART MONEY PRO MAX ONLINE")
+    send("🧪 DASHBOARD ONLINE")
     return "ok"
 
 
