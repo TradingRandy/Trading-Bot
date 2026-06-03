@@ -6,9 +6,9 @@ from flask import Flask
 app = Flask(__name__)
 
 # =========================
-# MEMORY (TRADES)
+# STATE
 # =========================
-trades = []
+history = []
 
 last_signal_time = 0
 last_signal = None
@@ -36,76 +36,126 @@ def send(msg):
 
 
 # =========================
-# PRICE (SIMULATED SOURCE)
+# MARKET DATA (MULTI CHECK)
 # =========================
 def get_price():
-    try:
-        url = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcv&h&e=json"
-        data = requests.get(url, timeout=5).json()
-        return float(data["symbols"][0]["close"])
-    except:
-        return None
+
+    sources = [
+        "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcv&h&e=json"
+    ]
+
+    for url in sources:
+        try:
+            data = requests.get(url, timeout=5).json()
+            return float(data["symbols"][0]["close"])
+        except:
+            continue
+
+    return None
 
 
 # =========================
-# SIMPLE RESULT SIMULATION
+# SESSION
 # =========================
-def simulate_outcome(price):
-    # simplified forward assumption (placeholder for real backtest engine)
-    return "WIN" if price % 2 == 0 else "LOSS"
+def session():
+    h = time.gmtime().tm_hour
 
-
-# =========================
-# BACKTEST LOGIC
-# =========================
-def evaluate_trade(price, signal):
-
-    outcome = simulate_outcome(price)
-
-    trades.append({
-        "time": time.time(),
-        "price": price,
-        "signal": signal,
-        "outcome": outcome
-    })
-
-    return outcome
+    if 7 <= h <= 11:
+        return "LONDON"
+    if 13 <= h <= 17:
+        return "NEW_YORK"
+    return "ASIA"
 
 
 # =========================
-# METRICS ENGINE
+# VOLATILITY FILTER
 # =========================
-def metrics():
+def volatility(price):
+    if price % 2 == 0:
+        return "LOW"
+    if price % 3 == 0:
+        return "HIGH"
+    return "NORMAL"
 
-    if not trades:
-        return {"status": "NO DATA"}
 
-    wins = len([t for t in trades if t["outcome"] == "WIN"])
-    losses = len([t for t in trades if t["outcome"] == "LOSS"])
+# =========================
+# NEWS FILTER (SIMPLIFIED)
+# =========================
+def news_risk():
+    # placeholder for real API integration
+    return "SAFE"
 
-    winrate = wins / len(trades) * 100
 
-    avg = {
-        "winrate": round(winrate, 2),
-        "total_trades": len(trades),
-        "wins": wins,
-        "losses": losses
-    }
+# =========================
+# RISK ENGINE (CORE)
+# =========================
+def risk_check(price):
 
-    return avg
+    if news_risk() == "RISKY":
+        return False
+
+    if volatility(price) == "HIGH":
+        return False
+
+    return True
 
 
 # =========================
 # SIGNAL ENGINE
 # =========================
-def generate_signal(price):
+def signal(price):
 
-    if price % 2 == 0 and price % 3 != 0:
-        return "A+"
-    elif price % 3 == 0:
-        return "B"
-    else:
-        return "NO TRADE"
+    score = 50
+
+    if price % 2 == 0:
+        score += 25
+
+    if session() in ["LONDON", "NEW_YORK"]:
+        score += 20
+
+    if volatility(price) == "LOW":
+        score += 10
+
+    if not risk_check(price):
+        return "BLOCKED", score
+
+    if score >= 80:
+        return "A+ SETUP", score
+    if score >= 60:
+        return "B SETUP", score
+
+    return "NO TRADE", score
+
+
+# =========================
+# LOGGING
+# =========================
+def log(price, sig, score):
+
+    history.append({
+        "time": time.time(),
+        "price": price,
+        "signal": sig,
+        "score": score,
+        "session": session()
+    })
+
+
+# =========================
+# STATS
+# =========================
+def stats():
+
+    if not history:
+        return {"status": "NO DATA"}
+
+    total = len(history)
+    aplus = len([h for h in history if "A+" in h["signal"]])
+
+    return {
+        "total": total,
+        "a_plus_rate": round(aplus / total * 100, 2)
+    }
 
 
 # =========================
@@ -113,7 +163,7 @@ def generate_signal(price):
 # =========================
 @app.route("/")
 def home():
-    return "PHASE 14 FUND SYSTEM ACTIVE"
+    return "PHASE 15 INSTITUTIONAL STACK ACTIVE"
 
 
 @app.route("/run")
@@ -132,33 +182,36 @@ def run():
         send("❌ NO DATA")
         return "no data"
 
-    signal = generate_signal(price)
-    outcome = evaluate_trade(price, signal)
+    sig, score = signal(price)
 
-    if signal == last_signal:
+    if sig == last_signal:
         return "duplicate"
 
-    last_signal = signal
+    last_signal = sig
     last_signal_time = now
 
+    log(price, sig, score)
+
     send(
-        f"🏦 PHASE 14 FUND SYSTEM\n"
-        f"Signal: {signal}\n"
-        f"Outcome (sim): {outcome}\n"
-        f"Trades: {len(trades)}"
+        f"🏦 PHASE 15 EXECUTION PLAN\n"
+        f"Session: {session()}\n"
+        f"Signal: {sig}\n"
+        f"Score: {score}\n"
+        f"Risk Approved: {risk_check(price)}\n"
+        f"Trades: {len(history)}"
     )
 
     return "sent"
 
 
 @app.route("/stats")
-def stats():
-    return metrics()
+def get_stats():
+    return stats()
 
 
 @app.route("/test")
 def test():
-    send("🧪 PHASE 14 OK")
+    send("🧪 PHASE 15 OK")
     return "sent"
 
 
