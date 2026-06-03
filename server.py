@@ -1,12 +1,12 @@
 import time
-
-last_message_time = {}
-
 import os
 import requests
 from flask import Flask
 
 app = Flask(__name__)
+
+# GLOBAL STATE (IMMER GANZ OBEN!)
+last_message_time = {}
 
 # =========================
 # TELEGRAM
@@ -94,3 +94,6 @@ if __name__ == "__main__":
 import time
 
 last_message_time = {}
+
+
+
