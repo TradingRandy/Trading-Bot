@@ -1,3 +1,7 @@
+import time
+
+last_message_time = {}
+
 import os
 import requests
 from flask import Flask
@@ -8,6 +12,8 @@ app = Flask(__name__)
 # TELEGRAM
 # =========================
 def send_telegram(message):
+    global last_message_time
+
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -15,15 +21,21 @@ def send_telegram(message):
         print("Missing Telegram env vars")
         return
 
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        r = requests.post(url, data={
-            "chat_id": chat_id,
-            "text": message
-        })
-        print("Telegram response:", r.text)
-    except Exception as e:
-        print("Telegram error:", e)
+    # 🧠 ANTI-DUPLICATE (5 Sekunden Window)
+    now = time.time()
+    last = last_message_time.get(message, 0)
+
+    if now - last < 5:
+        print("Duplicate blocked:", message)
+        return
+
+    last_message_time[message] = now
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "text": message
+    })
 
 # =========================
 # NEWS RISK ENGINE
