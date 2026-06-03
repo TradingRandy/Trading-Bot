@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 last_signal_time = 0
 last_signal = None
-COOLDOWN = 180  # 3 min (less spam, higher quality)
+COOLDOWN = 300  # 5 min (VERY selective system)
 
 
 # =========================
@@ -43,19 +43,39 @@ def get_price():
 
 
 # =========================
-# LIQUIDITY SWEEP DETECTION
+# SESSION DETECTION (simplified)
 # =========================
-def detect_sweep(price):
+def get_session():
+    hour = time.gmtime().tm_hour
+
+    if 7 <= hour <= 11:
+        return "LONDON"
+    if 13 <= hour <= 17:
+        return "NEW_YORK"
+    return "ASIA"
+
+
+# =========================
+# LIQUIDITY ZONES (simplified model)
+# =========================
+def liquidity_zone(price):
 
     if not price:
         return "NONE"
 
-    # simplified model (proxy logic)
-    if price % 5 == 0:
-        return "BUY_SIDE_SWEEP"
+    if price % 10 == 0:
+        return "HIGH_LIQUIDITY"
 
-    if price % 7 == 0:
-        return "SELL_SIDE_SWEEP"
+    return "NORMAL"
+
+
+# =========================
+# SWEEP DETECTION
+# =========================
+def sweep(price):
+
+    if price and price % 5 == 0:
+        return "SWEEP"
 
     return "NONE"
 
@@ -63,73 +83,57 @@ def detect_sweep(price):
 # =========================
 # STRUCTURE SHIFT (MSS)
 # =========================
-def detect_mss(price, sweep):
+def mss(sweep_state):
 
-    if sweep == "BUY_SIDE_SWEEP":
-        return "BEARISH_SHIFT"
-
-    if sweep == "SELL_SIDE_SWEEP":
-        return "BULLISH_SHIFT"
+    if sweep_state == "SWEEP":
+        return "SHIFT"
 
     return "NONE"
 
 
 # =========================
-# NEWS FILTER
+# FAIR VALUE GAP (FVG)
 # =========================
-def news_ok():
-    api_key = os.environ.get("NEWS_API_KEY")
+def fvg(price):
 
-    if not api_key:
-        return True
+    if price and price % 7 == 0:
+        return "FVG_ZONE"
 
-    try:
-        url = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
-        data = requests.get(url, timeout=5).json()
-
-        bad = ["CPI", "inflation", "Fed", "interest rate", "NFP"]
-
-        for a in data[:10]:
-            t = a.get("headline", "")
-            for b in bad:
-                if b.lower() in t.lower():
-                    return False
-
-        return True
-
-    except:
-        return True
+    return "NONE"
 
 
 # =========================
-# SCORE ENGINE (QUALITY ONLY)
+# SCORE ENGINE (PRO FILTER)
 # =========================
-def score(sweep, mss):
+def score(session, sweep_state, mss_state, fvg_state):
 
     s = 0
 
-    if sweep != "NONE":
-        s += 50
-
-    if mss != "NONE":
+    if sweep_state == "SWEEP":
         s += 40
 
-    if news_ok():
+    if mss_state == "SHIFT":
+        s += 30
+
+    if fvg_state == "FVG_ZONE":
+        s += 20
+
+    if session in ["LONDON", "NEW_YORK"]:
         s += 10
 
     return s
 
 
 # =========================
-# HEALTH
+# HOME
 # =========================
 @app.route("/")
 def home():
-    return "PHASE 9 MANUAL RUNNING"
+    return "PHASE 10 MANUAL ACTIVE"
 
 
 # =========================
-# SIGNAL ENGINE
+# MAIN ENGINE
 # =========================
 @app.route("/run")
 def run():
@@ -147,24 +151,23 @@ def run():
         send("❌ NO DATA")
         return "no data"
 
-    sweep = detect_sweep(price)
-    mss = detect_mss(price, sweep)
-    score_value = score(sweep, mss)
+    session = get_session()
+    sweep_state = sweep(price)
+    mss_state = mss(sweep_state)
+    fvg_state = fvg(price)
 
-    # FINAL DECISION LOGIC
-    if sweep != "NONE" and mss != "NONE" and score_value >= 80:
+    score_value = score(session, sweep_state, mss_state, fvg_state)
 
-        signal = "🟢 A+ SETUP (HIGH PROBABILITY)"
+    # FINAL DECISION
+    if sweep_state == "SWEEP" and mss_state == "SHIFT" and fvg_state == "FVG_ZONE" and score_value >= 80:
+        signal = "🟢 A+ INSTITUTIONAL SETUP"
 
-    elif sweep != "NONE" and mss != "NONE":
-
+    elif score_value >= 60:
         signal = "⚠️ B SETUP (WATCH)"
 
     else:
-
         signal = "❌ NO TRADE"
 
-    # anti duplicate
     if signal == last_signal:
         return "duplicate"
 
@@ -172,9 +175,11 @@ def run():
     last_signal_time = now
 
     send(
-        f"📊 XAUUSD PHASE 9\n"
-        f"Sweep: {sweep}\n"
-        f"Structure: {mss}\n"
+        f"🏦 XAUUSD PHASE 10\n"
+        f"Session: {session}\n"
+        f"Liquidity: {sweep_state}\n"
+        f"Structure: {mss_state}\n"
+        f"FVG: {fvg_state}\n"
         f"Score: {score_value}\n"
         f"Signal: {signal}"
     )
@@ -187,7 +192,7 @@ def run():
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 PHASE 9 OK")
+    send("🧪 PHASE 10 MANUAL OK")
     return "sent"
 
 
