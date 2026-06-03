@@ -1,29 +1,18 @@
-import os
 import requests
-from flask import Flask
 
-app = Flask(__name__)
+def check_news_risk():
+    API_KEY = os.environ.get("d8g8h6pr01qlgcuhut60d8g8h6pr01qlgcuhut6g")
 
-def send_telegram(message):
-    token = os.environ.get("TELEGRAM_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    url = f"https://finnhub.io/api/v1/news?category=general&token={API_KEY}"
+    data = requests.get(url).json()
 
-    if not token or not chat_id:
-        print("Missing Telegram env vars")
-        return
+    risky_keywords = ["CPI", "inflation", "Fed", "interest rate", "NFP"]
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    for article in data[:10]:
+        headline = article.get("headline", "")
 
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "text": message
-    })
+        for word in risky_keywords:
+            if word.lower() in headline.lower():
+                return "RISKY"
 
-@app.route("/")
-def home():
-    send_telegram("🧠 Trading Brain ONLINE")
-    return "Trading Bot läuft 🔥"
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    return "SAFE"
