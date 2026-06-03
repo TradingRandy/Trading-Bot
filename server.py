@@ -5,9 +5,6 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# =========================
-# GLOBAL STATE
-# =========================
 last_message_time = {}
 
 # =========================
@@ -20,32 +17,50 @@ def send_telegram(message):
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
-        print("Missing Telegram env vars")
         return
 
-    # 🧠 anti-spam (5 sec rule)
     now = time.time()
-    last = last_message_time.get(message, 0)
-
-    if now - last < 5:
-        print("Duplicate blocked:", message)
-        return
+    if message in last_message_time:
+        if now - last_message_time[message] < 5:
+            return
 
     last_message_time[message] = now
 
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        requests.post(url, data={
-            "chat_id": chat_id,
-            "text": message
-        })
-    except Exception as e:
-        print("Telegram error:", e)
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, data={"chat_id": chat_id, "text": message})
+
 
 # =========================
-# NEWS RISK ENGINE
+# MARKET DATA (SIMPLIFIED LIVE)
 # =========================
-def check_news_risk():
+def get_price():
+    try:
+        url = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcv&h&e=json"
+        data = requests.get(url, timeout=5).json()
+        return float(data["symbols"][0]["close"])
+    except:
+        return None
+
+
+# =========================
+# STRUCTURE ANALYSIS
+# =========================
+def get_volatility(price):
+    # simple proxy (later real candles)
+    return abs(price - (price * 0.995))
+
+
+def get_trend_strength(price):
+    # pseudo trend logic (upgrade later with EMA)
+    if price > 2000:
+        return 1
+    return 0
+
+
+# =========================
+# NEWS FILTER
+# =========================
+def check_news():
     api_key = os.environ.get("NEWS_API_KEY")
 
     if not api_key:
@@ -55,13 +70,12 @@ def check_news_risk():
         url = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
         data = requests.get(url, timeout=5).json()
 
-        risky_keywords = ["CPI", "inflation", "Fed", "interest rate", "NFP"]
+        bad = ["CPI", "inflation", "Fed", "interest rate", "NFP"]
 
-        for article in data[:10]:
-            headline = article.get("headline", "")
-
-            for word in risky_keywords:
-                if word.lower() in headline.lower():
+        for a in data[:10]:
+            t = a.get("headline", "")
+            for b in bad:
+                if b.lower() in t.lower():
                     return "RISKY"
 
         return "SAFE"
@@ -69,69 +83,65 @@ def check_news_risk():
     except:
         return "SAFE"
 
+
 # =========================
-# PHASE 3 — MARKET BRAIN
+# RISK ENGINE (KILL SWITCH)
 # =========================
+def market_ok(price):
 
-def get_trend_score():
-    ema_fast = 100
-    ema_slow = 95
+    if not price:
+        return False
 
-    diff = ema_fast - ema_slow
+    if check_news() == "RISKY":
+        return False
 
-    if diff > 5:
-        return 30
-    elif diff > 2:
-        return 20
-    elif diff > 0:
-        return 10
-    return 0
+    volatility = get_volatility(price)
 
+    # too chaotic market filter
+    if volatility > 20:
+        return False
 
-def get_liquidity_score():
-    return 10
+    return True
 
 
-def get_session_score():
-    hour = int(time.strftime("%H"))
+# =========================
+# FINAL SCORE ENGINE
+# =========================
+def get_score(price):
 
-    # London + NY session logic
-    if 8 <= hour <= 11:
-        return 20
-    elif 14 <= hour <= 17:
-        return 20
-    else:
-        return 5
-
-
-def get_trade_score():
     score = 0
 
-    score += get_trend_score()
-    score += get_liquidity_score()
+    if get_trend_strength(price):
+        score += 40
 
-    if check_news_risk() == "SAFE":
-        score += 20
+    if check_news() == "SAFE":
+        score += 30
 
-    score += get_session_score()
+    score += 20  # base liquidity assumption
 
     return score
 
-# =========================
-# ROUTES
-# =========================
 
+# =========================
+# ROUTE
+# =========================
 @app.route("/")
 def home():
 
-    score = get_trade_score()
+    price = get_price()
+
+    if not market_ok(price):
+        send_telegram("⛔ MARKET BLOCKED (NO TRADE ZONE)")
+        return "blocked"
+
+    score = get_score(price)
 
     if score >= 80:
-        send_telegram(f"🟢 STRONG TRADE (Score {score})")
+        send_telegram(f"🟢 STRONG TRADE {score}")
     elif score >= 50:
-        send_telegram(f"⚠️ WEAK TRADE (Score {score})")
+        send_telegram(f"⚠️ WEAK TRADE {score}")
     else:
-        send_telegram(f"❌ NO TRADE (Score {score})")
+        send_telegram(f"❌ NO TRADE {score}")
 
     return "Trading Bot läuft 🔥"
 
@@ -141,10 +151,10 @@ def test():
     send_telegram("🧪 TEST OK")
     return "sent"
 
+
 # =========================
 # START
 # =========================
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
