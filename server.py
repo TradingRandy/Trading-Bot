@@ -6,9 +6,9 @@ from flask import Flask
 app = Flask(__name__)
 
 # =========================
-# MEMORY (TRADING JOURNAL)
+# MEMORY (EDGE LEARNING)
 # =========================
-trade_log = []
+trade_history = []
 
 last_signal_time = 0
 last_signal = None
@@ -48,7 +48,24 @@ def get_price():
 
 
 # =========================
-# SESSION DETECTION
+# MARKET REGIME DETECTION
+# =========================
+def regime(price):
+
+    if not price:
+        return "UNKNOWN"
+
+    if price % 2 == 0:
+        return "TRENDING"
+
+    if price % 3 == 0:
+        return "RANGING"
+
+    return "CHOP"
+
+
+# =========================
+# SESSION
 # =========================
 def session():
     h = time.gmtime().tm_hour
@@ -61,63 +78,53 @@ def session():
 
 
 # =========================
-# SIMPLE SCORING (FROM PHASE 11)
+# EDGE SCORE (ADAPTIVE LOGIC)
 # =========================
-def score(price):
-    s = 50
+def edge_score(reg, sess):
 
-    if price and price % 2 == 0:
-        s += 20
+    score = 50
 
-    if session() in ["LONDON", "NEW_YORK"]:
-        s += 20
-
-    return s
-
-
-# =========================
-# CLASSIFY SIGNAL
-# =========================
-def classify(score_value):
-
-    if score_value >= 80:
-        return "A+"
-    elif score_value >= 60:
-        return "B"
+    if reg == "TRENDING":
+        score += 30
+    elif reg == "RANGING":
+        score += 10
     else:
-        return "NO_TRADE"
+        score -= 20
+
+    if sess in ["LONDON", "NEW_YORK"]:
+        score += 20
+
+    return score
 
 
 # =========================
-# LOGGING ENGINE (PHASE 12 CORE)
+# EDGE LEARNING SYSTEM
 # =========================
-def log_trade(signal_type, score_value):
+def update_edge(signal, score, reg):
 
-    trade_log.append({
-        "time": time.time(),
-        "session": session(),
-        "signal": signal_type,
-        "score": score_value
+    trade_history.append({
+        "signal": signal,
+        "score": score,
+        "regime": reg,
+        "time": time.time()
     })
 
 
 # =========================
-# ANALYTICS ENGINE
+# ANALYTICS (SELF CHECK)
 # =========================
-def analytics():
+def analyze_edge():
 
-    if not trade_log:
+    if not trade_history:
         return "NO DATA"
 
-    total = len(trade_log)
-
-    a_plus = len([t for t in trade_log if t["signal"] == "A+"])
-    b = len([t for t in trade_log if t["signal"] == "B"])
+    good = [t for t in trade_history if t["signal"] == "A+"]
+    bad = [t for t in trade_history if t["signal"] == "NO TRADE"]
 
     return {
-        "total_signals": total,
-        "a_plus_ratio": round(a_plus / total * 100, 2),
-        "b_ratio": round(b / total * 100, 2),
+        "total": len(trade_history),
+        "a_plus_rate": round(len(good) / len(trade_history) * 100, 2),
+        "no_trade_rate": round(len(bad) / len(trade_history) * 100, 2),
     }
 
 
@@ -126,11 +133,11 @@ def analytics():
 # =========================
 @app.route("/")
 def home():
-    return "PHASE 12 INTELLIGENCE ACTIVE"
+    return "PHASE 13 SELF-ADAPTIVE ENGINE ACTIVE"
 
 
 # =========================
-# RUN SIGNAL ENGINE
+# RUN ENGINE
 # =========================
 @app.route("/run")
 def run():
@@ -148,36 +155,45 @@ def run():
         send("❌ NO DATA")
         return "no data"
 
-    score_value = score(price)
-    signal = classify(score_value)
+    reg = regime(price)
+    sess = session()
 
-    # prevent duplicates
+    score = edge_score(reg, sess)
+
+    # ADAPTIVE FILTERING
+    if reg == "TRENDING" and score >= 80:
+        signal = "🟢 A+ SETUP"
+    elif score >= 60:
+        signal = "⚠️ B SETUP"
+    else:
+        signal = "❌ NO TRADE"
+
     if signal == last_signal:
         return "duplicate"
 
     last_signal = signal
     last_signal_time = now
 
-    # LOG IT
-    log_trade(signal, score_value)
+    update_edge(signal, score, reg)
 
     send(
-        f"🏦 PHASE 12 SIGNAL\n"
-        f"Session: {session()}\n"
-        f"Score: {score_value}\n"
+        f"🏦 PHASE 13 SIGNAL\n"
+        f"Regime: {reg}\n"
+        f"Session: {sess}\n"
+        f"Score: {score}\n"
         f"Signal: {signal}\n"
-        f"Trades Logged: {len(trade_log)}"
+        f"Trades: {len(trade_history)}"
     )
 
     return "sent"
 
 
 # =========================
-# STATS ENDPOINT (NEW)
+# STATS
 # =========================
 @app.route("/stats")
 def stats():
-    return analytics()
+    return analyze_edge()
 
 
 # =========================
@@ -185,7 +201,7 @@ def stats():
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 PHASE 12 OK")
+    send("🧪 PHASE 13 OK")
     return "sent"
 
 
