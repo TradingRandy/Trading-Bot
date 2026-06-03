@@ -1,7 +1,7 @@
 import time
 import os
 import requests
-from flask import Flask
+from flask import Flask, request
 
 app = Flask(__name__)
 
@@ -36,22 +36,15 @@ def send(msg):
 
 
 # =========================
-# MARKET DATA (MULTI CHECK)
+# MARKET DATA
 # =========================
 def get_price():
-
-    sources = [
-        "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcv&h&e=json"
-    ]
-
-    for url in sources:
-        try:
-            data = requests.get(url, timeout=5).json()
-            return float(data["symbols"][0]["close"])
-        except:
-            continue
-
-    return None
+    try:
+        url = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcv&h&e=json"
+        data = requests.get(url, timeout=5).json()
+        return float(data["symbols"][0]["close"])
+    except:
+        return None
 
 
 # =========================
@@ -68,7 +61,7 @@ def session():
 
 
 # =========================
-# VOLATILITY FILTER
+# VOLATILITY
 # =========================
 def volatility(price):
     if price % 2 == 0:
@@ -79,29 +72,16 @@ def volatility(price):
 
 
 # =========================
-# NEWS FILTER (SIMPLIFIED)
-# =========================
-def news_risk():
-    # placeholder for real API integration
-    return "SAFE"
-
-
-# =========================
-# RISK ENGINE (CORE)
+# RISK
 # =========================
 def risk_check(price):
-
-    if news_risk() == "RISKY":
-        return False
-
     if volatility(price) == "HIGH":
         return False
-
     return True
 
 
 # =========================
-# SIGNAL ENGINE
+# SIGNAL ENGINE (DEIN SYSTEM)
 # =========================
 def signal(price):
 
@@ -128,10 +108,9 @@ def signal(price):
 
 
 # =========================
-# LOGGING
+# LOG
 # =========================
 def log(price, sig, score):
-
     history.append({
         "time": time.time(),
         "price": price,
@@ -142,45 +121,33 @@ def log(price, sig, score):
 
 
 # =========================
-# STATS
-# =========================
-def stats():
-
-    if not history:
-        return {"status": "NO DATA"}
-
-    total = len(history)
-    aplus = len([h for h in history if "A+" in h["signal"]])
-
-    return {
-        "total": total,
-        "a_plus_rate": round(aplus / total * 100, 2)
-    }
-
-
-# =========================
-# ROUTES
+# HOME
 # =========================
 @app.route("/")
 def home():
-    return "PHASE 15 INSTITUTIONAL STACK ACTIVE"
+    return "TRADING ENGINE ONLINE"
 
 
-@app.route("/run")
-def run():
+# =========================
+# TRADINGVIEW WEBHOOK (WICHTIG!)
+# =========================
+@app.route("/webhook", methods=["POST"])
+def webhook():
 
     global last_signal_time, last_signal
+
+    data = request.json
+
+    if not data:
+        return "no data", 400
+
+    symbol = data.get("symbol", "XAUUSD")
+    price = float(data.get("price", 0))
 
     now = time.time()
 
     if now - last_signal_time < COOLDOWN:
         return "cooldown"
-
-    price = get_price()
-
-    if not price:
-        send("❌ NO DATA")
-        return "no data"
 
     sig, score = signal(price)
 
@@ -193,25 +160,45 @@ def run():
     log(price, sig, score)
 
     send(
-        f"🏦 PHASE 15 EXECUTION PLAN\n"
-        f"Session: {session()}\n"
-        f"Signal: {sig}\n"
-        f"Score: {score}\n"
-        f"Risk Approved: {risk_check(price)}\n"
-        f"Trades: {len(history)}"
+        f"""📊 TRADINGVIEW ALERT
+
+Symbol: {symbol}
+Price: {price}
+
+Engine Signal: {sig}
+Score: {score}
+
+Session: {session()}
+"""
     )
 
+    return "ok", 200
+
+
+# =========================
+# MANUAL TEST
+# =========================
+@app.route("/test")
+def test():
+    send("🧪 BOT OK")
     return "sent"
 
 
-@app.route("/stats")
-def get_stats():
-    return stats()
+# =========================
+# OPTIONAL MANUAL RUN
+# =========================
+@app.route("/run")
+def run():
+    price = get_price()
 
+    if not price:
+        return "no data"
 
-@app.route("/test")
-def test():
-    send("🧪 PHASE 15 OK")
+    sig, score = signal(price)
+    log(price, sig, score)
+
+    send(f"MANUAL RUN: {sig} | {score}")
+
     return "sent"
 
 
