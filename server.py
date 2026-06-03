@@ -8,10 +8,8 @@ app = Flask(__name__)
 # =========================
 # STATE
 # =========================
+history = []
 price_history = []
-
-swing_highs = []
-swing_lows = []
 
 last_signal_time = 0
 last_signal = None
@@ -26,6 +24,7 @@ def send(msg):
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
+        print("Missing Telegram env vars")
         return
 
     try:
@@ -34,48 +33,98 @@ def send(msg):
             data={"chat_id": chat_id, "text": msg},
             timeout=5
         )
+    except Exception as e:
+        print("Telegram error:", e)
+
+
+# =========================
+# NEWS (REAL FINNHUB)
+# =========================
+def news_risk():
+    api_key = os.environ.get("NEWS_API_KEY")
+
+    if not api_key:
+        return "SAFE"
+
+    try:
+        url = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
+        data = requests.get(url, timeout=5).json()
+
+        risky_words = [
+            "CPI", "inflation", "Fed",
+            "interest rate", "NFP",
+            "unemployment", "rate hike"
+        ]
+
+        for article in data[:15]:
+            headline = article.get("headline", "")
+            if any(w.lower() in headline.lower() for w in risky_words):
+                return "RISKY"
+
+        return "SAFE"
+
     except:
-        pass
+        return "SAFE"
 
 
 # =========================
-# STRUCTURE ENGINE
+# PRICE SOURCE (TRADINGVIEW)
 # =========================
-def update_structure(price):
-
+def update_price(price):
     price_history.append(price)
-
-    if len(price_history) > 100:
+    if len(price_history) > 50:
         price_history.pop(0)
 
+
+# =========================
+# VOLATILITY (REAL RANGE BASED)
+# =========================
+def volatility(price):
+
+    if len(price_history) < 10:
+        return "NORMAL"
+
+    high = max(price_history[-10:])
+    low = min(price_history[-10:])
+
+    rng = high - low
+
+    if rng > price * 0.005:
+        return "HIGH"
+
+    if rng < price * 0.002:
+        return "LOW"
+
+    return "NORMAL"
+
+
+# =========================
+# STRUCTURE BIAS
+# =========================
+def bias():
+
+    if len(price_history) < 10:
+        return "NEUTRAL"
+
+    if price_history[-1] > price_history[-5]:
+        return "BULLISH"
+
+    if price_history[-1] < price_history[-5]:
+        return "BEARISH"
+
+    return "RANGE"
+
+
+# =========================
+# LIQUIDITY LOGIC (SIMPLE BUT REAL)
+# =========================
+def liquidity_signal(price):
+
     if len(price_history) < 5:
-        return
+        return "NONE"
 
-    i = len(price_history) - 3
-
-    if price_history[i] > price_history[i-1] and price_history[i] > price_history[i+1]:
-        swing_highs.append(price_history[i])
-
-    if price_history[i] < price_history[i-1] and price_history[i] < price_history[i+1]:
-        swing_lows.append(price_history[i])
-
-    if len(swing_highs) > 20:
-        swing_highs.pop(0)
-
-    if len(swing_lows) > 20:
-        swing_lows.pop(0)
-
-
-# =========================
-# LIQUIDITY SWEEP
-# =========================
-def liquidity_sweep(price):
-
-    if len(swing_highs) < 2 or len(swing_lows) < 2:
-        return "NO_SWEEP"
-
-    last_high = swing_highs[-1]
-    last_low = swing_lows[-1]
+    last_high = max(price_history[-5:])
+    last_low = min(price_history[-5:])
 
     if price > last_high:
         return "BUY_SIDE_SWEEP"
@@ -87,52 +136,20 @@ def liquidity_sweep(price):
 
 
 # =========================
-# MARKET STRUCTURE STATE
-# =========================
-def structure_state():
-
-    if len(price_history) < 10:
-        return "NEUTRAL"
-
-    hh = price_history[-1] > price_history[-5]
-    ll = price_history[-1] < price_history[-5]
-
-    if hh:
-        return "BULLISH"
-    if ll:
-        return "BEARISH"
-
-    return "RANGE"
-
-
-# =========================
-# DISPLACEMENT (REAL MOVE FILTER)
-# =========================
-def displacement(price):
-
-    if len(price_history) < 5:
-        return False
-
-    return abs(price_history[-1] - price_history[-5]) > (price_history[-5] * 0.002)
-
-
-# =========================
-# SIGNAL ENGINE (INSTITUTIONAL LOGIC)
+# SIGNAL ENGINE
 # =========================
 def signal(price):
 
-    update_structure(price)
-
-    sweep = liquidity_sweep(price)
-    bias = structure_state()
-    impulse = displacement(price)
+    update_price(price)
 
     score = 50
     direction = None
 
-    # =========================
-    # LIQUIDITY EDGE
-    # =========================
+    sweep = liquidity_signal(price)
+    b = bias()
+    vol = volatility(price)
+
+    # liquidity logic
     if sweep == "BUY_SIDE_SWEEP":
         score += 35
         direction = "SHORT"
@@ -144,29 +161,27 @@ def signal(price):
     else:
         score -= 10
 
-    # =========================
-    # STRUCTURE CONFIRMATION
-    # =========================
-    if bias == "BULLISH" and direction == "LONG":
+    # bias confirmation
+    if b == "BULLISH" and direction == "LONG":
         score += 15
 
-    if bias == "BEARISH" and direction == "SHORT":
+    if b == "BEARISH" and direction == "SHORT":
         score += 15
 
-    if bias == "RANGE":
+    if b == "RANGE":
         score -= 10
 
-    # =========================
-    # DISPLACEMENT CONFIRMATION
-    # =========================
-    if impulse:
-        score += 10
+    # volatility filter
+    if vol == "HIGH":
+        score -= 5
 
-    # =========================
-    # FINAL DECISION
-    # =========================
+    # news filter
+    if news_risk() == "RISKY":
+        return "BLOCKED (NEWS)", score
+
+    # final decision
     if score >= 80:
-        return f"A+ {direction} (INSTITUTIONAL)", score
+        return f"A+ {direction} (PRO)", score
 
     if score >= 65:
         return f"B {direction}", score
@@ -175,7 +190,7 @@ def signal(price):
 
 
 # =========================
-# WEBHOOK
+# WEBHOOK (TRADINGVIEW)
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -183,11 +198,13 @@ def webhook():
     global last_signal_time, last_signal
 
     data = request.get_json(silent=True)
+
     if not data:
         return "no data", 400
 
     price = float(data.get("price", 0))
     symbol = data.get("symbol", "XAUUSD")
+    tv_signal = data.get("signal", "TV")
 
     now = time.time()
 
@@ -202,18 +219,21 @@ def webhook():
     last_signal = sig
     last_signal_time = now
 
-    send(f"""🏦 INSTITUTIONAL PRO ENGINE
+    send(f"""
+🏦 REAL DATA ENGINE
 
 Symbol: {symbol}
+TV Signal: {tv_signal}
+
+Price: {price}
 
 Signal: {sig}
 Score: {score}
 
-Structure: {structure_state()}
-Sweep: {liquidity_sweep(price)}
-Displacement: {displacement(price)}
-
-Price: {price}
+Bias: {bias()}
+Volatility: {volatility(price)}
+Liquidity: {liquidity_signal(price)}
+News: {news_risk()}
 """)
 
     return "ok", 200
@@ -224,7 +244,7 @@ Price: {price}
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 INSTITUTIONAL ENGINE LIVE")
+    send("🧪 SYSTEM ONLINE")
     return "ok"
 
 
