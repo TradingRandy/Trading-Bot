@@ -31,7 +31,7 @@ def send_telegram(message):
 
 
 # =========================
-# MARKET DATA (SIMPLIFIED LIVE)
+# MARKET DATA
 # =========================
 def get_price():
     try:
@@ -43,28 +43,44 @@ def get_price():
 
 
 # =========================
-# STRUCTURE ANALYSIS
+# REGIME DETECTION (NEW)
 # =========================
-def get_volatility(price):
-    # simple proxy (later real candles)
-    return abs(price - (price * 0.995))
+def get_market_regime(price):
+
+    change = price * 0.002  # fake volatility base
+
+    if change > 5:
+        return "HIGH_VOL"
+    elif price % 2 == 0:
+        return "TREND"
+    else:
+        return "RANGE"
 
 
-def get_trend_strength(price):
-    # pseudo trend logic (upgrade later with EMA)
-    if price > 2000:
-        return 1
-    return 0
+# =========================
+# SMART MONEY FILTER
+# =========================
+def smart_money_filter(price, regime):
+
+    # chop filter
+    if regime == "RANGE":
+        return False
+
+    # avoid high chaos
+    if regime == "HIGH_VOL":
+        return False
+
+    return True
 
 
 # =========================
 # NEWS FILTER
 # =========================
-def check_news():
+def news_ok():
     api_key = os.environ.get("NEWS_API_KEY")
 
     if not api_key:
-        return "SAFE"
+        return True
 
     try:
         url = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
@@ -76,79 +92,72 @@ def check_news():
             t = a.get("headline", "")
             for b in bad:
                 if b.lower() in t.lower():
-                    return "RISKY"
+                    return False
 
-        return "SAFE"
+        return True
 
     except:
-        return "SAFE"
+        return True
 
 
 # =========================
-# RISK ENGINE (KILL SWITCH)
+# SCORE ENGINE (PHASE 6)
 # =========================
-def market_ok(price):
-
-    if not price:
-        return False
-
-    if check_news() == "RISKY":
-        return False
-
-    volatility = get_volatility(price)
-
-    # too chaotic market filter
-    if volatility > 20:
-        return False
-
-    return True
-
-
-# =========================
-# FINAL SCORE ENGINE
-# =========================
-def get_score(price):
+def get_score(price, regime):
 
     score = 0
 
-    if get_trend_strength(price):
+    # trend bias
+    if regime == "TREND":
         score += 40
 
-    if check_news() == "SAFE":
+    # regime quality
+    if regime == "TREND":
+        score += 20
+
+    # news
+    if news_ok():
         score += 30
 
-    score += 20  # base liquidity assumption
+    # base liquidity assumption
+    score += 10
 
     return score
 
 
 # =========================
-# ROUTE
+# MAIN LOGIC
 # =========================
 @app.route("/")
 def home():
 
     price = get_price()
 
-    if not market_ok(price):
-        send_telegram("⛔ MARKET BLOCKED (NO TRADE ZONE)")
+    if not price:
+        send_telegram("❌ NO DATA")
+        return "no data"
+
+    regime = get_market_regime(price)
+
+    if not smart_money_filter(price, regime):
+        send_telegram(f"⛔ MARKET BLOCKED ({regime})")
         return "blocked"
 
-    score = get_score(price)
+    score = get_score(price, regime)
 
     if score >= 80:
-        send_telegram(f"🟢 STRONG TRADE {score}")
+        send_telegram(f"🟢 STRONG TRADE | {regime} | Score {score}")
     elif score >= 50:
-        send_telegram(f"⚠️ WEAK TRADE {score}")
+        send_telegram(f"⚠️ WEAK TRADE | {regime} | Score {score}")
     else:
-        send_telegram(f"❌ NO TRADE {score}")
+        send_telegram(f"❌ NO TRADE | {regime} | Score {score}")
 
     return "Trading Bot läuft 🔥"
 
 
 @app.route("/test")
 def test():
-    send_telegram("🧪 TEST OK")
+    send_telegram("🧪 PHASE 6 TEST OK")
     return "sent"
 
 
