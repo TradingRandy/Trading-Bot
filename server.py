@@ -23,6 +23,7 @@ def send(msg):
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
+        print("Missing Telegram env vars")
         return
 
     try:
@@ -31,12 +32,12 @@ def send(msg):
             data={"chat_id": chat_id, "text": msg},
             timeout=5
         )
-    except:
-        pass
+    except Exception as e:
+        print("Telegram error:", e)
 
 
 # =========================
-# MARKET DATA
+# MARKET DATA (optional fallback)
 # =========================
 def get_price():
     try:
@@ -61,7 +62,7 @@ def session():
 
 
 # =========================
-# VOLATILITY
+# VOLATILITY (simple logic)
 # =========================
 def volatility(price):
     if price % 2 == 0:
@@ -72,16 +73,20 @@ def volatility(price):
 
 
 # =========================
-# RISK
+# RISK CHECK
 # =========================
 def risk_check(price):
+    if price == 0:
+        return False
+
     if volatility(price) == "HIGH":
         return False
+
     return True
 
 
 # =========================
-# SIGNAL ENGINE
+# SIGNAL ENGINE (DEIN SYSTEM)
 # =========================
 def signal(price):
 
@@ -129,27 +134,39 @@ def home():
 
 
 # =========================
-# 🔥 TRADINGVIEW WEBHOOK (NEU)
+# 🔥 TRADINGVIEW WEBHOOK (MAIN INPUT)
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
 
-    data = request.json
-    print("TradingView Data:", data)
-
-    if not data:
-        return "no data", 400
-
-    symbol = data.get("symbol", "XAUUSD")
-    price = float(data.get("price", 0))
-
     global last_signal_time, last_signal
 
+    # SAFE JSON PARSING (TradingView compatible)
+    data = request.get_json(silent=True)
+
+    if not data:
+        print("No JSON received")
+        return "no data", 400
+
+    print("TRADINGVIEW DATA:", data)
+
+    symbol = data.get("symbol", "XAUUSD")
+    signal_in = data.get("signal", "NO_SIGNAL")
+
+    try:
+        price = float(data.get("price", 0))
+    except:
+        price = 0
+
+    timestamp = data.get("time", "N/A")
+
+    # COOLDOWN
     now = time.time()
 
     if now - last_signal_time < COOLDOWN:
         return "cooldown"
 
+    # ENGINE
     sig, score = signal(price)
 
     if sig == last_signal:
@@ -160,16 +177,20 @@ def webhook():
 
     log(price, sig, score)
 
+    # TELEGRAM OUTPUT
     send(
         f"""📊 TRADINGVIEW SIGNAL
 
 Symbol: {symbol}
+TV Signal: {signal_in}
 Price: {price}
+Time: {timestamp}
 
-Engine Signal: {sig}
+Engine Result: {sig}
 Score: {score}
 
 Session: {session()}
+Risk: {"OK" if risk_check(price) else "BLOCKED"}
 """
     )
 
@@ -177,7 +198,7 @@ Session: {session()}
 
 
 # =========================
-# TEST
+# TEST ROUTE
 # =========================
 @app.route("/test")
 def test():
