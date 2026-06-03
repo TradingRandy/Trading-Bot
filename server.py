@@ -81,7 +81,7 @@ def risk_check(price):
 
 
 # =========================
-# SIGNAL ENGINE (DEIN SYSTEM)
+# SIGNAL ENGINE
 # =========================
 def signal(price):
 
@@ -129,20 +129,21 @@ def home():
 
 
 # =========================
-# TRADINGVIEW WEBHOOK (WICHTIG!)
+# 🔥 TRADINGVIEW WEBHOOK (NEU)
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
 
-    global last_signal_time, last_signal
-
     data = request.json
+    print("TradingView Data:", data)
 
     if not data:
         return "no data", 400
 
     symbol = data.get("symbol", "XAUUSD")
     price = float(data.get("price", 0))
+
+    global last_signal_time, last_signal
 
     now = time.time()
 
@@ -160,7 +161,7 @@ def webhook():
     log(price, sig, score)
 
     send(
-        f"""📊 TRADINGVIEW ALERT
+        f"""📊 TRADINGVIEW SIGNAL
 
 Symbol: {symbol}
 Price: {price}
@@ -176,7 +177,7 @@ Session: {session()}
 
 
 # =========================
-# MANUAL TEST
+# TEST
 # =========================
 @app.route("/test")
 def test():
