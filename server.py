@@ -23,7 +23,7 @@ def send_telegram(message):
         print("Missing Telegram env vars")
         return
 
-    # 🧠 anti spam (5 sec rule)
+    # 🧠 anti-spam (5 sec rule)
     now = time.time()
     last = last_message_time.get(message, 0)
 
@@ -70,28 +70,38 @@ def check_news_risk():
         return "SAFE"
 
 # =========================
-# PHASE 3 — INTELLIGENCE LAYER
+# PHASE 3 — MARKET BRAIN
 # =========================
 
 def get_trend_score():
     ema_fast = 100
     ema_slow = 95
 
-    if ema_fast > ema_slow:
+    diff = ema_fast - ema_slow
+
+    if diff > 5:
         return 30
+    elif diff > 2:
+        return 20
+    elif diff > 0:
+        return 10
     return 0
 
 
 def get_liquidity_score():
-    return 20
+    return 10
 
 
 def get_session_score():
     hour = int(time.strftime("%H"))
 
-    if 7 <= hour <= 17:
+    # London + NY session logic
+    if 8 <= hour <= 11:
         return 20
-    return 5
+    elif 14 <= hour <= 17:
+        return 20
+    else:
+        return 5
 
 
 def get_trade_score():
@@ -132,7 +142,7 @@ def test():
     return "sent"
 
 # =========================
-# START SERVER (RENDER)
+# START
 # =========================
 
 if __name__ == "__main__":
