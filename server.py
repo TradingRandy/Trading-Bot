@@ -5,7 +5,9 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# GLOBAL STATE (IMMER GANZ OBEN!)
+# =========================
+# GLOBAL STATE
+# =========================
 last_message_time = {}
 
 # =========================
@@ -21,7 +23,7 @@ def send_telegram(message):
         print("Missing Telegram env vars")
         return
 
-    # 🧠 ANTI-DUPLICATE (5 Sekunden Window)
+    # 🧠 anti spam (5 sec rule)
     now = time.time()
     last = last_message_time.get(message, 0)
 
@@ -31,11 +33,14 @@ def send_telegram(message):
 
     last_message_time[message] = now
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "text": message
-    })
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, data={
+            "chat_id": chat_id,
+            "text": message
+        })
+    except Exception as e:
+        print("Telegram error:", e)
 
 # =========================
 # NEWS RISK ENGINE
@@ -65,16 +70,58 @@ def check_news_risk():
         return "SAFE"
 
 # =========================
+# PHASE 3 — INTELLIGENCE LAYER
+# =========================
+
+def get_trend_score():
+    ema_fast = 100
+    ema_slow = 95
+
+    if ema_fast > ema_slow:
+        return 30
+    return 0
+
+
+def get_liquidity_score():
+    return 20
+
+
+def get_session_score():
+    hour = int(time.strftime("%H"))
+
+    if 7 <= hour <= 17:
+        return 20
+    return 5
+
+
+def get_trade_score():
+    score = 0
+
+    score += get_trend_score()
+    score += get_liquidity_score()
+
+    if check_news_risk() == "SAFE":
+        score += 20
+
+    score += get_session_score()
+
+    return score
+
+# =========================
 # ROUTES
 # =========================
+
 @app.route("/")
 def home():
-    market_state = check_news_risk()
 
-    if market_state == "RISKY":
-        send_telegram("⚠️ NEWS RISK ACTIVE – NO TRADE")
+    score = get_trade_score()
+
+    if score >= 80:
+        send_telegram(f"🟢 STRONG TRADE (Score {score})")
+    elif score >= 50:
+        send_telegram(f"⚠️ WEAK TRADE (Score {score})")
     else:
-        send_telegram("🧠 Trading Bot ONLINE – Market SAFE")
+        send_telegram(f"❌ NO TRADE (Score {score})")
 
     return "Trading Bot läuft 🔥"
 
@@ -85,15 +132,9 @@ def test():
     return "sent"
 
 # =========================
-# START
+# START SERVER (RENDER)
 # =========================
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-import time
-
-last_message_time = {}
-
-
-
