@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 last_signal_time = 0
 last_signal = None
-COOLDOWN = 300  # 5 min (VERY selective system)
+COOLDOWN = 300
 
 
 # =========================
@@ -43,83 +43,76 @@ def get_price():
 
 
 # =========================
-# SESSION DETECTION (simplified)
+# MULTI TIMEFRAME SIMULATION
 # =========================
-def get_session():
-    hour = time.gmtime().tm_hour
+def timeframe_alignment(price):
 
-    if 7 <= hour <= 11:
+    if not price:
+        return "NO_DATA"
+
+    tf_1m = price % 3
+    tf_5m = price % 7
+    tf_15m = price % 11
+
+    bullish = tf_1m < 2 and tf_5m < 4 and tf_15m < 6
+    bearish = tf_1m > 2 and tf_5m > 4 and tf_15m > 6
+
+    if bullish:
+        return "BULLISH_ALIGNMENT"
+    if bearish:
+        return "BEARISH_ALIGNMENT"
+
+    return "MIXED"
+
+
+# =========================
+# VOLATILITY REGIME
+# =========================
+def volatility_regime(price):
+
+    if not price:
+        return "UNKNOWN"
+
+    if price % 2 == 0:
+        return "TRENDING"
+
+    if price % 3 == 0:
+        return "VOLATILE"
+
+    return "RANGING"
+
+
+# =========================
+# SESSION FILTER
+# =========================
+def session():
+
+    h = time.gmtime().tm_hour
+
+    if 7 <= h <= 11:
         return "LONDON"
-    if 13 <= hour <= 17:
+    if 13 <= h <= 17:
         return "NEW_YORK"
     return "ASIA"
 
 
 # =========================
-# LIQUIDITY ZONES (simplified model)
+# SCORE ENGINE
 # =========================
-def liquidity_zone(price):
-
-    if not price:
-        return "NONE"
-
-    if price % 10 == 0:
-        return "HIGH_LIQUIDITY"
-
-    return "NORMAL"
-
-
-# =========================
-# SWEEP DETECTION
-# =========================
-def sweep(price):
-
-    if price and price % 5 == 0:
-        return "SWEEP"
-
-    return "NONE"
-
-
-# =========================
-# STRUCTURE SHIFT (MSS)
-# =========================
-def mss(sweep_state):
-
-    if sweep_state == "SWEEP":
-        return "SHIFT"
-
-    return "NONE"
-
-
-# =========================
-# FAIR VALUE GAP (FVG)
-# =========================
-def fvg(price):
-
-    if price and price % 7 == 0:
-        return "FVG_ZONE"
-
-    return "NONE"
-
-
-# =========================
-# SCORE ENGINE (PRO FILTER)
-# =========================
-def score(session, sweep_state, mss_state, fvg_state):
+def score(tf, vol, sess):
 
     s = 0
 
-    if sweep_state == "SWEEP":
-        s += 40
+    if tf in ["BULLISH_ALIGNMENT", "BEARISH_ALIGNMENT"]:
+        s += 50
 
-    if mss_state == "SHIFT":
+    if vol == "TRENDING":
         s += 30
+    elif vol == "VOLATILE":
+        s -= 20
 
-    if fvg_state == "FVG_ZONE":
+    if sess in ["LONDON", "NEW_YORK"]:
         s += 20
-
-    if session in ["LONDON", "NEW_YORK"]:
-        s += 10
 
     return s
 
@@ -129,11 +122,11 @@ def score(session, sweep_state, mss_state, fvg_state):
 # =========================
 @app.route("/")
 def home():
-    return "PHASE 10 MANUAL ACTIVE"
+    return "PHASE 11 MANUAL ACTIVE"
 
 
 # =========================
-# MAIN ENGINE
+# SIGNAL ENGINE
 # =========================
 @app.route("/run")
 def run():
@@ -151,20 +144,16 @@ def run():
         send("❌ NO DATA")
         return "no data"
 
-    session = get_session()
-    sweep_state = sweep(price)
-    mss_state = mss(sweep_state)
-    fvg_state = fvg(price)
+    tf = timeframe_alignment(price)
+    vol = volatility_regime(price)
+    sess = session()
 
-    score_value = score(session, sweep_state, mss_state, fvg_state)
+    score_value = score(tf, vol, sess)
 
-    # FINAL DECISION
-    if sweep_state == "SWEEP" and mss_state == "SHIFT" and fvg_state == "FVG_ZONE" and score_value >= 80:
+    if tf != "MIXED" and vol == "TRENDING" and score_value >= 80:
         signal = "🟢 A+ INSTITUTIONAL SETUP"
-
     elif score_value >= 60:
-        signal = "⚠️ B SETUP (WATCH)"
-
+        signal = "⚠️ B SETUP"
     else:
         signal = "❌ NO TRADE"
 
@@ -175,11 +164,10 @@ def run():
     last_signal_time = now
 
     send(
-        f"🏦 XAUUSD PHASE 10\n"
-        f"Session: {session}\n"
-        f"Liquidity: {sweep_state}\n"
-        f"Structure: {mss_state}\n"
-        f"FVG: {fvg_state}\n"
+        f"🏦 PHASE 11 SIGNAL\n"
+        f"TF: {tf}\n"
+        f"Volatility: {vol}\n"
+        f"Session: {sess}\n"
         f"Score: {score_value}\n"
         f"Signal: {signal}"
     )
@@ -192,7 +180,7 @@ def run():
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 PHASE 10 MANUAL OK")
+    send("🧪 PHASE 11 OK")
     return "sent"
 
 
