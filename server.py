@@ -5,10 +5,16 @@ from flask import Flask
 
 app = Flask(__name__)
 
+# =========================
+# ANTI SPAM SYSTEM
+# =========================
 last_message_time = {}
+last_run_time = 0
+COOLDOWN_SECONDS = 30
+
 
 # =========================
-# TELEGRAM
+# TELEGRAM (SAFE)
 # =========================
 def send_telegram(message):
     global last_message_time
@@ -17,147 +23,115 @@ def send_telegram(message):
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
+        print("Missing env vars")
         return
 
     now = time.time()
+
+    # prevent duplicate messages
     if message in last_message_time:
-        if now - last_message_time[message] < 5:
+        if now - last_message_time[message] < 10:
+            print("BLOCKED DUPLICATE:", message)
             return
 
     last_message_time[message] = now
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": message})
+
+    try:
+        requests.post(url, data={
+            "chat_id": chat_id,
+            "text": message
+        }, timeout=5)
+    except Exception as e:
+        print("Telegram error:", e)
 
 
 # =========================
-# MARKET DATA
+# MARKET DATA (SAFE FALLBACK)
 # =========================
 def get_price():
     try:
         url = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcv&h&e=json"
-        data = requests.get(url, timeout=5).json()
-        return float(data["symbols"][0]["close"])
+        r = requests.get(url, timeout=5).json()
+        return float(r["symbols"][0]["close"])
     except:
         return None
 
 
 # =========================
-# REGIME DETECTION (NEW)
+# SIMPLE MARKET CHECK
 # =========================
-def get_market_regime(price):
-
-    change = price * 0.002  # fake volatility base
-
-    if change > 5:
-        return "HIGH_VOL"
-    elif price % 2 == 0:
-        return "TREND"
-    else:
-        return "RANGE"
-
-
-# =========================
-# SMART MONEY FILTER
-# =========================
-def smart_money_filter(price, regime):
-
-    # chop filter
-    if regime == "RANGE":
+def market_ok(price):
+    if not price:
         return False
 
-    # avoid high chaos
-    if regime == "HIGH_VOL":
+    # simple volatility filter
+    if price <= 0:
         return False
 
     return True
 
 
 # =========================
-# NEWS FILTER
+# SCORE ENGINE (SIMPLE PHASE BASE)
 # =========================
-def news_ok():
-    api_key = os.environ.get("NEWS_API_KEY")
+def get_score(price):
+    score = 50
 
-    if not api_key:
-        return True
-
-    try:
-        url = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
-        data = requests.get(url, timeout=5).json()
-
-        bad = ["CPI", "inflation", "Fed", "interest rate", "NFP"]
-
-        for a in data[:10]:
-            t = a.get("headline", "")
-            for b in bad:
-                if b.lower() in t.lower():
-                    return False
-
-        return True
-
-    except:
-        return True
-
-
-# =========================
-# SCORE ENGINE (PHASE 6)
-# =========================
-def get_score(price, regime):
-
-    score = 0
-
-    # trend bias
-    if regime == "TREND":
-        score += 40
-
-    # regime quality
-    if regime == "TREND":
+    if price > 2000:
         score += 20
-
-    # news
-    if news_ok():
-        score += 30
-
-    # base liquidity assumption
-    score += 10
 
     return score
 
 
 # =========================
-# MAIN LOGIC
+# HEALTH CHECK (IMPORTANT)
 # =========================
 @app.route("/")
-def home():
+def health():
+    return "OK - Bot Alive"
+
+
+# =========================
+# MAIN TRADING ROUTE (MANUAL / CONTROLLED)
+# =========================
+@app.route("/run")
+def run():
+    global last_run_time
+
+    now = time.time()
+
+    # cooldown protection (VERY IMPORTANT)
+    if now - last_run_time < COOLDOWN_SECONDS:
+        return "cooldown active"
+
+    last_run_time = now
 
     price = get_price()
 
-    if not price:
+    if not market_ok(price):
         send_telegram("❌ NO DATA")
         return "no data"
 
-    regime = get_market_regime(price)
-
-    if not smart_money_filter(price, regime):
-        send_telegram(f"⛔ MARKET BLOCKED ({regime})")
-        return "blocked"
-
-    score = get_score(price, regime)
+    score = get_score(price)
 
     if score >= 80:
-        send_telegram(f"🟢 STRONG TRADE | {regime} | Score {score}")
+        send_telegram(f"🟢 STRONG TRADE | Score {score}")
     elif score >= 50:
-        send_telegram(f"⚠️ WEAK TRADE | {regime} | Score {score}")
+        send_telegram(f"⚠️ WEAK TRADE | Score {score}")
     else:
-        send_telegram(f"❌ NO TRADE | {regime} | Score {score}")
+        send_telegram(f"❌ NO TRADE | Score {score}")
 
-    return "Trading Bot läuft 🔥"
+    return "done"
 
 
+# =========================
+# TEST ROUTE
+# =========================
 @app.route("/test")
 def test():
-    send_telegram("🧪 PHASE 6 TEST OK")
+    send_telegram("🧪 TEST OK")
     return "sent"
 
 
