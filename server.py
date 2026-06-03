@@ -37,7 +37,7 @@ def send(msg):
 
 
 # =========================
-# PRICE TRACKING
+# PRICE TRACKING (TRADINGVIEW)
 # =========================
 def update_price(price):
     price_history.append(price)
@@ -46,7 +46,7 @@ def update_price(price):
 
 
 # =========================
-# NEWS (REAL FINNHUB)
+# NEWS ENGINE (REAL FINNHUB)
 # =========================
 def news_risk():
     api_key = os.environ.get("NEWS_API_KEY")
@@ -59,19 +59,19 @@ def news_risk():
         data = requests.get(url, timeout=5).json()
 
         high = ["CPI", "Fed", "NFP", "interest rate"]
-        medium = ["inflation", "unemployment", "GDP"]
+        medium = ["inflation", "GDP", "unemployment"]
 
         score = 0
 
         for n in data[:20]:
-            headline = n.get("headline", "").lower()
+            h = n.get("headline", "").lower()
 
             for w in high:
-                if w.lower() in headline:
+                if w.lower() in h:
                     score += 3
 
             for w in medium:
-                if w.lower() in headline:
+                if w.lower() in h:
                     score += 1
 
         return score
@@ -81,9 +81,9 @@ def news_risk():
 
 
 # =========================
-# VOLATILITY (REAL RANGE)
+# VOLATILITY (REAL RANGE MODEL)
 # =========================
-def volatility_score():
+def volatility():
     if len(price_history) < 10:
         return 1
 
@@ -103,9 +103,10 @@ def volatility_score():
 
 
 # =========================
-# STRUCTURE
+# MARKET STRUCTURE
 # =========================
 def structure():
+
     if len(price_history) < 6:
         return "NEUTRAL"
 
@@ -119,7 +120,7 @@ def structure():
 
 
 # =========================
-# LIQUIDITY LOGIC
+# LIQUIDITY SWEEP LOGIC
 # =========================
 def liquidity(price):
 
@@ -139,7 +140,26 @@ def liquidity(price):
 
 
 # =========================
-# SIGNAL ENGINE (SMART MONEY PRO)
+# FAIR VALUE CONTEXT (SIMPLIFIED)
+# =========================
+def fvg(price):
+
+    if len(price_history) < 10:
+        return "NONE"
+
+    avg = sum(price_history[-10:]) / 10
+
+    if price > avg * 1.002:
+        return "OVEREXTENDED"
+
+    if price < avg * 0.998:
+        return "DISCOUNT"
+
+    return "BALANCED"
+
+
+# =========================
+# SIGNAL ENGINE (SMART MONEY PRO MAX)
 # =========================
 def signal(price):
 
@@ -150,9 +170,10 @@ def signal(price):
 
     sweep = liquidity(price)
     struct = structure()
+    fv = fvg(price)
 
     news = news_risk()
-    vol = volatility_score()
+    vol = volatility()
 
     # =====================
     # LIQUIDITY
@@ -179,6 +200,15 @@ def signal(price):
 
     if struct == "RANGE":
         score -= 5
+
+    # =====================
+    # FAIR VALUE
+    # =====================
+    if fv == "OVEREXTENDED" and direction == "SHORT":
+        score += 10
+
+    if fv == "DISCOUNT" and direction == "LONG":
+        score += 10
 
     # =====================
     # NEWS FILTER
@@ -242,7 +272,7 @@ def webhook():
     last_signal_time = now
 
     send(f"""
-🏦 SMART MONEY PRO ENGINE
+🏦 SMART MONEY PRO MAX ENGINE
 
 Symbol: {symbol}
 TV Signal: {tv_signal}
@@ -254,7 +284,8 @@ Score: {score}
 
 Structure: {structure()}
 Liquidity: {liquidity(price)}
-Volatility: {volatility_score()}
+FVG: {fvg(price)}
+Volatility: {volatility()}
 News Risk: {news}
 """)
 
@@ -266,7 +297,7 @@ News Risk: {news}
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 SMART MONEY SYSTEM ONLINE")
+    send("🧪 SMART MONEY PRO MAX ONLINE")
     return "ok"
 
 
