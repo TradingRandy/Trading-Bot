@@ -7,23 +7,27 @@ app = Flask(__name__)
 
 last_signal_time = 0
 last_signal = None
-COOLDOWN = 120  # 2 min minimum between signals
+COOLDOWN = 180  # 3 min (less spam, higher quality)
 
 
 # =========================
 # TELEGRAM
 # =========================
-def send_telegram(msg):
+def send(msg):
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
         return
 
-    requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data={"chat_id": chat_id, "text": msg}
-    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": msg},
+            timeout=5
+        )
+    except:
+        pass
 
 
 # =========================
@@ -32,41 +36,46 @@ def send_telegram(msg):
 def get_price():
     try:
         url = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcv&h&e=json"
-        r = requests.get(url, timeout=5).json()
-        return float(r["symbols"][0]["close"])
+        data = requests.get(url, timeout=5).json()
+        return float(data["symbols"][0]["close"])
     except:
         return None
 
 
 # =========================
-# SIMPLE TREND (EMA STYLE LOGIC)
+# LIQUIDITY SWEEP DETECTION
 # =========================
-def get_trend(price):
-    if price is None:
-        return "NO_DATA"
+def detect_sweep(price):
 
-    if price > 2000:
-        return "BULL"
-    else:
-        return "BEAR"
-
-
-# =========================
-# VOLATILITY FILTER
-# =========================
-def volatility_ok(price):
     if not price:
-        return False
+        return "NONE"
 
-    # simple stability check
-    if price % 3 == 0:
-        return False
+    # simplified model (proxy logic)
+    if price % 5 == 0:
+        return "BUY_SIDE_SWEEP"
 
-    return True
+    if price % 7 == 0:
+        return "SELL_SIDE_SWEEP"
+
+    return "NONE"
 
 
 # =========================
-# NEWS FILTER (OPTIONAL)
+# STRUCTURE SHIFT (MSS)
+# =========================
+def detect_mss(price, sweep):
+
+    if sweep == "BUY_SIDE_SWEEP":
+        return "BEARISH_SHIFT"
+
+    if sweep == "SELL_SIDE_SWEEP":
+        return "BULLISH_SHIFT"
+
+    return "NONE"
+
+
+# =========================
+# NEWS FILTER
 # =========================
 def news_ok():
     api_key = os.environ.get("NEWS_API_KEY")
@@ -93,36 +102,34 @@ def news_ok():
 
 
 # =========================
-# SIGNAL QUALITY ENGINE
+# SCORE ENGINE (QUALITY ONLY)
 # =========================
-def get_score(price, trend):
+def score(sweep, mss):
 
-    score = 0
+    s = 0
 
-    if trend == "BULL":
-        score += 40
+    if sweep != "NONE":
+        s += 50
+
+    if mss != "NONE":
+        s += 40
 
     if news_ok():
-        score += 30
+        s += 10
 
-    if volatility_ok(price):
-        score += 20
-
-    score += 10  # base liquidity assumption
-
-    return score
+    return s
 
 
 # =========================
-# HEALTH CHECK (IMPORTANT)
+# HEALTH
 # =========================
 @app.route("/")
 def home():
-    return "OK - Signal Engine Running"
+    return "PHASE 9 MANUAL RUNNING"
 
 
 # =========================
-# MANUAL SIGNAL ENDPOINT
+# SIGNAL ENGINE
 # =========================
 @app.route("/run")
 def run():
@@ -137,33 +144,39 @@ def run():
     price = get_price()
 
     if not price:
-        send_telegram("❌ NO DATA")
+        send("❌ NO DATA")
         return "no data"
 
-    trend = get_trend(price)
-    score = get_score(price, trend)
+    sweep = detect_sweep(price)
+    mss = detect_mss(price, sweep)
+    score_value = score(sweep, mss)
 
-    signal = None
+    # FINAL DECISION LOGIC
+    if sweep != "NONE" and mss != "NONE" and score_value >= 80:
 
-    if score >= 80:
-        signal = "🟢 A+ SETUP"
-    elif score >= 60:
-        signal = "⚠️ GOOD SETUP"
+        signal = "🟢 A+ SETUP (HIGH PROBABILITY)"
+
+    elif sweep != "NONE" and mss != "NONE":
+
+        signal = "⚠️ B SETUP (WATCH)"
+
     else:
+
         signal = "❌ NO TRADE"
 
-    # prevent duplicates
+    # anti duplicate
     if signal == last_signal:
-        return "duplicate blocked"
+        return "duplicate"
 
     last_signal = signal
     last_signal_time = now
 
-    send_telegram(
-        f"📊 XAUUSD SIGNAL\n"
-        f"Trend: {trend}\n"
-        f"Score: {score}\n"
-        f"Decision: {signal}"
+    send(
+        f"📊 XAUUSD PHASE 9\n"
+        f"Sweep: {sweep}\n"
+        f"Structure: {mss}\n"
+        f"Score: {score_value}\n"
+        f"Signal: {signal}"
     )
 
     return "sent"
@@ -174,7 +187,7 @@ def run():
 # =========================
 @app.route("/test")
 def test():
-    send_telegram("🧪 PHASE 8 MANUAL OK")
+    send("🧪 PHASE 9 OK")
     return "sent"
 
 
