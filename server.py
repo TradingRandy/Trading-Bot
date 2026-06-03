@@ -6,7 +6,7 @@ from flask import Flask, request
 app = Flask(__name__)
 
 # =========================
-# STATE (HEDGE FUND DASHBOARD CORE)
+# STATE
 # =========================
 price_history = []
 trade_log = []
@@ -38,7 +38,7 @@ def send(msg):
 
 
 # =========================
-# PRICE FEED (TRADINGVIEW)
+# PRICE UPDATE
 # =========================
 def update_price(price):
     price_history.append(price)
@@ -47,7 +47,7 @@ def update_price(price):
 
 
 # =========================
-# NEWS ENGINE (REAL)
+# NEWS (REAL FINNHUB)
 # =========================
 def news_risk():
     api_key = os.environ.get("NEWS_API_KEY")
@@ -81,7 +81,7 @@ def news_risk():
 
 
 # =========================
-# VOLATILITY ENGINE
+# VOLATILITY
 # =========================
 def volatility():
     if len(price_history) < 10:
@@ -101,7 +101,7 @@ def volatility():
 
 
 # =========================
-# STRUCTURE (BOS SIMPLIFIED)
+# STRUCTURE
 # =========================
 def structure():
     if len(price_history) < 6:
@@ -117,7 +117,7 @@ def structure():
 
 
 # =========================
-# LIQUIDITY MODEL
+# LIQUIDITY
 # =========================
 def liquidity(price):
     if len(price_history) < 5:
@@ -136,30 +136,7 @@ def liquidity(price):
 
 
 # =========================
-# PERFORMANCE DASHBOARD (HEDGE FUND STYLE)
-# =========================
-def stats():
-
-    if not trade_log:
-        return {
-            "trades": 0,
-            "winrate": 0,
-            "avg_score": 0
-        }
-
-    wins = len([t for t in trade_log if "A+" in t["signal"]])
-    total = len(trade_log)
-    avg_score = sum([t["score"] for t in trade_log]) / total
-
-    return {
-        "trades": total,
-        "winrate": round((wins / total) * 100, 2),
-        "avg_score": round(avg_score, 2)
-    }
-
-
-# =========================
-# SIGNAL ENGINE (HEDGE FUND STYLE)
+# SIGNAL ENGINE
 # =========================
 def signal(price):
 
@@ -170,59 +147,40 @@ def signal(price):
 
     sweep = liquidity(price)
     struct = structure()
-    vol = volatility()
     news = news_risk()
+    vol = volatility()
 
-    # =====================
     # LIQUIDITY
-    # =====================
     if sweep == "BUY_SIDE_SWEEP":
         score += 35
         direction = "SHORT"
-
     elif sweep == "SELL_SIDE_SWEEP":
         score += 35
         direction = "LONG"
-
     else:
         score -= 10
 
-    # =====================
     # STRUCTURE
-    # =====================
     if struct == "BULLISH" and direction == "LONG":
         score += 20
-
     if struct == "BEARISH" and direction == "SHORT":
         score += 20
 
-    if struct == "RANGE":
-        score -= 5
-
-    # =====================
-    # NEWS FILTER
-    # =====================
+    # NEWS
     if news >= 6:
         return "BLOCKED (NEWS)", score
-
     if news >= 3:
         score -= 15
 
-    # =====================
-    # VOLATILITY FILTER
-    # =====================
+    # VOLATILITY
     if vol == 3:
         return "BLOCKED (VOL)", score
-
     if vol == 2:
         score -= 10
 
-    # =====================
-    # FINAL DECISION
-    # =====================
+    # FINAL
     if score >= 85:
         return f"A+ SMART MONEY {direction}", score
-
     if score >= 70:
         return f"B SETUP {direction}", score
 
@@ -230,15 +188,33 @@ def signal(price):
 
 
 # =========================
-# DASHBOARD HOME
+# STATS (HEDGE FUND DASHBOARD)
+# =========================
+def stats():
+    if not trade_log:
+        return {"trades": 0, "winrate": 0, "avg_score": 0}
+
+    wins = len([t for t in trade_log if "A+" in t["signal"]])
+    total = len(trade_log)
+    avg = sum([t["score"] for t in trade_log]) / total
+
+    return {
+        "trades": total,
+        "winrate": round(wins / total * 100, 2),
+        "avg_score": round(avg, 2)
+    }
+
+
+# =========================
+# HOME
 # =========================
 @app.route("/")
 def home():
-    return "HEDGE FUND DASHBOARD ACTIVE"
+    return "HEDGE FUND ENGINE ACTIVE"
 
 
 # =========================
-# TRADINGVIEW WEBHOOK
+# WEBHOOK (TRADINGVIEW REAL DATA)
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -275,10 +251,10 @@ def webhook():
     })
 
     send(f"""
-📊 HEDGE FUND DASHBOARD SIGNAL
+🏦 HEDGE FUND SYSTEM
 
 Symbol: {symbol}
-TV: {tv_signal}
+TV Signal: {tv_signal}
 Price: {price}
 Time: {timestamp}
 
@@ -288,9 +264,9 @@ Score: {score}
 Structure: {structure()}
 Liquidity: {liquidity(price)}
 Volatility: {volatility()}
-News Risk: {news_risk()}
+News: {news_risk()}
 
-📈 Stats:
+Stats:
 Trades: {stats()['trades']}
 Winrate: {stats()['winrate']}%
 Avg Score: {stats()['avg_score']}
@@ -300,7 +276,49 @@ Avg Score: {stats()['avg_score']}
 
 
 # =========================
-# STATS API
+# BACKTEST (SIMPLE ENGINE)
+# =========================
+@app.route("/backtest")
+def backtest():
+
+    if len(price_history) < 30:
+        return {"error": "not enough data"}
+
+    capital = 10000
+    wins = 0
+    losses = 0
+
+    for i in range(10, len(price_history)):
+
+        price = price_history[i]
+
+        if price_history[i] > price_history[i-5]:
+            direction = "LONG"
+        else:
+            direction = "SHORT"
+
+        future = price * (1.001 if direction == "LONG" else 0.999)
+
+        pnl = future - price if direction == "LONG" else price - future
+
+        capital += pnl
+
+        if pnl > 0:
+            wins += 1
+        else:
+            losses += 1
+
+    winrate = wins / (wins + losses) * 100 if (wins + losses) > 0 else 0
+
+    return {
+        "capital": capital,
+        "winrate": round(winrate, 2),
+        "trades": wins + losses
+    }
+
+
+# =========================
+# STATS ENDPOINT
 # =========================
 @app.route("/stats")
 def get_stats():
@@ -312,7 +330,7 @@ def get_stats():
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 DASHBOARD ONLINE")
+    send("🧪 SYSTEM ONLINE")
     return "ok"
 
 
