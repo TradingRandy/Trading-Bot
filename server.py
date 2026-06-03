@@ -15,12 +15,14 @@ def send_telegram(message):
         print("Missing Telegram env vars")
         return
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "text": message
-    })
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, data={
+            "chat_id": chat_id,
+            "text": message
+        })
+    except Exception as e:
+        print("Telegram error:", e)
 
 # =========================
 # NEWS RISK ENGINE
@@ -33,7 +35,7 @@ def check_news_risk():
 
     try:
         url = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
-        data = requests.get(url).json()
+        data = requests.get(url, timeout=5).json()
 
         risky_keywords = ["CPI", "inflation", "Fed", "interest rate", "NFP"]
 
@@ -65,13 +67,16 @@ def home():
     return "Trading Bot läuft 🔥"
 
 # =========================
+# TEST ROUTE
+# =========================
+@app.route("/test")
+def test():
+    send_telegram("🧪 TEST OK")
+    return "sent"
+
+# =========================
 # START SERVER (RENDER)
 # =========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-@app.route("/test")
-def test():
-    send_telegram("🧪 TEST OK")
-    return "sent"
