@@ -6,9 +6,9 @@ from flask import Flask
 app = Flask(__name__)
 
 # =========================
-# MEMORY (EDGE LEARNING)
+# MEMORY (TRADES)
 # =========================
-trade_history = []
+trades = []
 
 last_signal_time = 0
 last_signal = None
@@ -36,7 +36,7 @@ def send(msg):
 
 
 # =========================
-# PRICE DATA
+# PRICE (SIMULATED SOURCE)
 # =========================
 def get_price():
     try:
@@ -48,97 +48,74 @@ def get_price():
 
 
 # =========================
-# MARKET REGIME DETECTION
+# SIMPLE RESULT SIMULATION
 # =========================
-def regime(price):
-
-    if not price:
-        return "UNKNOWN"
-
-    if price % 2 == 0:
-        return "TRENDING"
-
-    if price % 3 == 0:
-        return "RANGING"
-
-    return "CHOP"
+def simulate_outcome(price):
+    # simplified forward assumption (placeholder for real backtest engine)
+    return "WIN" if price % 2 == 0 else "LOSS"
 
 
 # =========================
-# SESSION
+# BACKTEST LOGIC
 # =========================
-def session():
-    h = time.gmtime().tm_hour
+def evaluate_trade(price, signal):
 
-    if 7 <= h <= 11:
-        return "LONDON"
-    if 13 <= h <= 17:
-        return "NEW_YORK"
-    return "ASIA"
+    outcome = simulate_outcome(price)
 
-
-# =========================
-# EDGE SCORE (ADAPTIVE LOGIC)
-# =========================
-def edge_score(reg, sess):
-
-    score = 50
-
-    if reg == "TRENDING":
-        score += 30
-    elif reg == "RANGING":
-        score += 10
-    else:
-        score -= 20
-
-    if sess in ["LONDON", "NEW_YORK"]:
-        score += 20
-
-    return score
-
-
-# =========================
-# EDGE LEARNING SYSTEM
-# =========================
-def update_edge(signal, score, reg):
-
-    trade_history.append({
+    trades.append({
+        "time": time.time(),
+        "price": price,
         "signal": signal,
-        "score": score,
-        "regime": reg,
-        "time": time.time()
+        "outcome": outcome
     })
 
+    return outcome
+
 
 # =========================
-# ANALYTICS (SELF CHECK)
+# METRICS ENGINE
 # =========================
-def analyze_edge():
+def metrics():
 
-    if not trade_history:
-        return "NO DATA"
+    if not trades:
+        return {"status": "NO DATA"}
 
-    good = [t for t in trade_history if t["signal"] == "A+"]
-    bad = [t for t in trade_history if t["signal"] == "NO TRADE"]
+    wins = len([t for t in trades if t["outcome"] == "WIN"])
+    losses = len([t for t in trades if t["outcome"] == "LOSS"])
 
-    return {
-        "total": len(trade_history),
-        "a_plus_rate": round(len(good) / len(trade_history) * 100, 2),
-        "no_trade_rate": round(len(bad) / len(trade_history) * 100, 2),
+    winrate = wins / len(trades) * 100
+
+    avg = {
+        "winrate": round(winrate, 2),
+        "total_trades": len(trades),
+        "wins": wins,
+        "losses": losses
     }
 
+    return avg
+
 
 # =========================
-# HOME
+# SIGNAL ENGINE
+# =========================
+def generate_signal(price):
+
+    if price % 2 == 0 and price % 3 != 0:
+        return "A+"
+    elif price % 3 == 0:
+        return "B"
+    else:
+        return "NO TRADE"
+
+
+# =========================
+# ROUTES
 # =========================
 @app.route("/")
 def home():
-    return "PHASE 13 SELF-ADAPTIVE ENGINE ACTIVE"
+    return "PHASE 14 FUND SYSTEM ACTIVE"
 
 
-# =========================
-# RUN ENGINE
-# =========================
 @app.route("/run")
 def run():
 
@@ -155,18 +132,8 @@ def run():
         send("❌ NO DATA")
         return "no data"
 
-    reg = regime(price)
-    sess = session()
-
-    score = edge_score(reg, sess)
-
-    # ADAPTIVE FILTERING
-    if reg == "TRENDING" and score >= 80:
-        signal = "🟢 A+ SETUP"
-    elif score >= 60:
-        signal = "⚠️ B SETUP"
-    else:
-        signal = "❌ NO TRADE"
+    signal = generate_signal(price)
+    outcome = evaluate_trade(price, signal)
 
     if signal == last_signal:
         return "duplicate"
@@ -174,34 +141,24 @@ def run():
     last_signal = signal
     last_signal_time = now
 
-    update_edge(signal, score, reg)
-
     send(
-        f"🏦 PHASE 13 SIGNAL\n"
-        f"Regime: {reg}\n"
-        f"Session: {sess}\n"
-        f"Score: {score}\n"
+        f"🏦 PHASE 14 FUND SYSTEM\n"
         f"Signal: {signal}\n"
-        f"Trades: {len(trade_history)}"
+        f"Outcome (sim): {outcome}\n"
+        f"Trades: {len(trades)}"
     )
 
     return "sent"
 
 
-# =========================
-# STATS
-# =========================
 @app.route("/stats")
 def stats():
-    return analyze_edge()
+    return metrics()
 
 
-# =========================
-# TEST
-# =========================
 @app.route("/test")
 def test():
-    send("🧪 PHASE 13 OK")
+    send("🧪 PHASE 14 OK")
     return "sent"
 
 
