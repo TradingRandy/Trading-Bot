@@ -9,12 +9,14 @@ app = Flask(__name__)
 # STATE
 # =========================
 history = []
+
 last_signal_time = 0
 last_signal = None
 COOLDOWN = 300
 
-# store price history for EMA + structure
-prices = []
+price_history = []
+swing_highs = []
+swing_lows = []
 
 
 # =========================
@@ -28,85 +30,131 @@ def send(msg):
         print("Missing Telegram env vars")
         return
 
-    requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data={"chat_id": chat_id, "text": msg},
-        timeout=5
-    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": msg},
+            timeout=5
+        )
+    except Exception as e:
+        print("Telegram error:", e)
 
 
 # =========================
-# EMA CALCULATION (REAL)
+# STRUCTURE UPDATE
 # =========================
-def ema(values, period):
-    if len(values) < period:
-        return None
+def update_structure(price):
 
-    k = 2 / (period + 1)
-    ema_val = sum(values[:period]) / period  # SMA seed
+    price_history.append(price)
 
-    for price in values[period:]:
-        ema_val = price * k + ema_val * (1 - k)
+    if len(price_history) > 50:
+        price_history.pop(0)
 
-    return ema_val
+    if len(price_history) < 5:
+        return
+
+    i = len(price_history) - 3
+
+    # swing high
+    if price_history[i] > price_history[i-1] and price_history[i] > price_history[i+1]:
+        swing_highs.append(price_history[i])
+
+    # swing low
+    if price_history[i] < price_history[i-1] and price_history[i] < price_history[i+1]:
+        swing_lows.append(price_history[i])
+
+    if len(swing_highs) > 20:
+        swing_highs.pop(0)
+
+    if len(swing_lows) > 20:
+        swing_lows.pop(0)
 
 
 # =========================
-# MARKET STRUCTURE
+# LIQUIDITY DETECTION
 # =========================
-def market_structure(prices):
-    if len(prices) < 5:
-        return "NO_STRUCTURE"
+def liquidity_sweep(price):
 
-    highs = prices[-5:]
-    trend_up = all(highs[i] >= highs[i-1] for i in range(1, len(highs)))
-    trend_down = all(highs[i] <= highs[i-1] for i in range(1, len(highs)))
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return "NO_SWEEP"
 
-    if trend_up:
-        return "UPTREND"
-    if trend_down:
-        return "DOWNTREND"
+    last_high = swing_highs[-1]
+    last_low = swing_lows[-1]
+
+    # BUY SIDE LIQUIDITY (stop hunt above highs)
+    if price > last_high:
+        return "BUY_SIDE_SWEEP"
+
+    # SELL SIDE LIQUIDITY (stop hunt below lows)
+    if price < last_low:
+        return "SELL_SIDE_SWEEP"
+
+    return "NONE"
+
+
+# =========================
+# MARKET CONTEXT
+# =========================
+def context_bias():
+    if len(price_history) < 10:
+        return "NEUTRAL"
+
+    if price_history[-1] > price_history[-5]:
+        return "BULLISH"
+
+    if price_history[-1] < price_history[-5]:
+        return "BEARISH"
+
     return "RANGE"
 
 
 # =========================
-# SIGNAL ENGINE (PRO LOGIC)
+# MAIN SIGNAL ENGINE
 # =========================
 def signal(price):
 
-    prices.append(price)
+    update_structure(price)
 
-    ema9 = ema(prices, 9)
-    ema21 = ema(prices, 21)
-    structure = market_structure(prices)
-
-    if not ema9 or not ema21:
-        return "NO DATA", 0
+    sweep = liquidity_sweep(price)
+    bias = context_bias()
 
     score = 50
+    direction = "NONE"
 
-    # EMA crossover logic
-    if ema9 > ema21:
-        score += 25
-        direction = "LONG"
-    else:
-        score -= 25
+    # =========================
+    # LIQUIDITY EDGE (CORE)
+    # =========================
+    if sweep == "BUY_SIDE_SWEEP":
+        score += 35
         direction = "SHORT"
 
-    # Market structure filter
-    if structure == "UPTREND" and direction == "LONG":
-        score += 20
-    if structure == "DOWNTREND" and direction == "SHORT":
-        score += 20
+    elif sweep == "SELL_SIDE_SWEEP":
+        score += 35
+        direction = "LONG"
 
-    # Range penalty
-    if structure == "RANGE":
-        score -= 20
+    else:
+        score -= 10
 
+    # =========================
+    # CONTEXT FILTER
+    # =========================
+    if bias == "BULLISH" and direction == "LONG":
+        score += 15
+
+    if bias == "BEARISH" and direction == "SHORT":
+        score += 15
+
+    if bias == "RANGE":
+        score -= 10
+
+    # =========================
+    # FINAL DECISION
+    # =========================
     if score >= 80:
-        return "A+ SETUP", score
+        return f"A+ {direction} (LIQUIDITY SWEEP)", score
+
     if score >= 65:
-        return "B SETUP", score
+        return f"B {direction} (STRUCTURE ENTRY)", score
 
     return "NO TRADE", score
 
@@ -142,19 +190,20 @@ def webhook():
     last_signal_time = now
 
     send(
-        f"""📊 PRO EMA ENGINE
+        f"""💧 LIQUIDITY ENGINE
 
 Symbol: {symbol}
 TV Signal: {tv_signal}
 
 Price: {price}
-EMA9/EMA21 ACTIVE
-Structure: {market_structure(prices)}
+
+Structure: {len(price_history)} candles tracked
+Bias: {context_bias()}
 
 Result: {sig}
 Score: {score}
 
-COOLDOWN: ON
+Sweep Active: {liquidity_sweep(price)}
 """
     )
 
@@ -166,7 +215,7 @@ COOLDOWN: ON
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 EMA ENGINE ONLINE")
+    send("🧪 LIQUIDITY ENGINE ONLINE")
     return "ok"
 
 
