@@ -9,10 +9,12 @@ app = Flask(__name__)
 # STATE
 # =========================
 history = []
-
 last_signal_time = 0
 last_signal = None
 COOLDOWN = 300
+
+# store price history for EMA + structure
+prices = []
 
 
 # =========================
@@ -26,147 +28,111 @@ def send(msg):
         print("Missing Telegram env vars")
         return
 
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": msg},
-            timeout=5
-        )
-    except Exception as e:
-        print("Telegram error:", e)
+    requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data={"chat_id": chat_id, "text": msg},
+        timeout=5
+    )
 
 
 # =========================
-# MARKET DATA (optional fallback)
+# EMA CALCULATION (REAL)
 # =========================
-def get_price():
-    try:
-        url = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcv&h&e=json"
-        data = requests.get(url, timeout=5).json()
-        return float(data["symbols"][0]["close"])
-    except:
+def ema(values, period):
+    if len(values) < period:
         return None
 
+    k = 2 / (period + 1)
+    ema_val = sum(values[:period]) / period  # SMA seed
 
-# =========================
-# SESSION
-# =========================
-def session():
-    h = time.gmtime().tm_hour
+    for price in values[period:]:
+        ema_val = price * k + ema_val * (1 - k)
 
-    if 7 <= h <= 11:
-        return "LONDON"
-    if 13 <= h <= 17:
-        return "NEW_YORK"
-    return "ASIA"
+    return ema_val
 
 
 # =========================
-# VOLATILITY (simple logic)
+# MARKET STRUCTURE
 # =========================
-def volatility(price):
-    if price % 2 == 0:
-        return "LOW"
-    if price % 3 == 0:
-        return "HIGH"
-    return "NORMAL"
+def market_structure(prices):
+    if len(prices) < 5:
+        return "NO_STRUCTURE"
 
+    highs = prices[-5:]
+    trend_up = all(highs[i] >= highs[i-1] for i in range(1, len(highs)))
+    trend_down = all(highs[i] <= highs[i-1] for i in range(1, len(highs)))
 
-# =========================
-# RISK CHECK
-# =========================
-def risk_check(price):
-    if price == 0:
-        return False
-
-    if volatility(price) == "HIGH":
-        return False
-
-    return True
+    if trend_up:
+        return "UPTREND"
+    if trend_down:
+        return "DOWNTREND"
+    return "RANGE"
 
 
 # =========================
-# SIGNAL ENGINE (DEIN SYSTEM)
+# SIGNAL ENGINE (PRO LOGIC)
 # =========================
 def signal(price):
 
+    prices.append(price)
+
+    ema9 = ema(prices, 9)
+    ema21 = ema(prices, 21)
+    structure = market_structure(prices)
+
+    if not ema9 or not ema21:
+        return "NO DATA", 0
+
     score = 50
 
-    if price % 2 == 0:
+    # EMA crossover logic
+    if ema9 > ema21:
         score += 25
+        direction = "LONG"
+    else:
+        score -= 25
+        direction = "SHORT"
 
-    if session() in ["LONDON", "NEW_YORK"]:
+    # Market structure filter
+    if structure == "UPTREND" and direction == "LONG":
+        score += 20
+    if structure == "DOWNTREND" and direction == "SHORT":
         score += 20
 
-    if volatility(price) == "LOW":
-        score += 10
-
-    if not risk_check(price):
-        return "BLOCKED", score
+    # Range penalty
+    if structure == "RANGE":
+        score -= 20
 
     if score >= 80:
         return "A+ SETUP", score
-    if score >= 60:
+    if score >= 65:
         return "B SETUP", score
 
     return "NO TRADE", score
 
 
 # =========================
-# LOG
-# =========================
-def log(price, sig, score):
-    history.append({
-        "time": time.time(),
-        "price": price,
-        "signal": sig,
-        "score": score,
-        "session": session()
-    })
-
-
-# =========================
-# HOME
-# =========================
-@app.route("/")
-def home():
-    return "TRADING ENGINE ONLINE"
-
-
-# =========================
-# 🔥 TRADINGVIEW WEBHOOK (MAIN INPUT)
+# WEBHOOK (TRADINGVIEW)
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
 
     global last_signal_time, last_signal
 
-    # SAFE JSON PARSING (TradingView compatible)
     data = request.get_json(silent=True)
 
     if not data:
-        print("No JSON received")
         return "no data", 400
 
-    print("TRADINGVIEW DATA:", data)
-
     symbol = data.get("symbol", "XAUUSD")
-    signal_in = data.get("signal", "NO_SIGNAL")
+    price = float(data.get("price", 0))
+    tv_signal = data.get("signal", "TV")
 
-    try:
-        price = float(data.get("price", 0))
-    except:
-        price = 0
-
-    timestamp = data.get("time", "N/A")
-
-    # COOLDOWN
     now = time.time()
 
     if now - last_signal_time < COOLDOWN:
         return "cooldown"
 
-    # ENGINE
     sig, score = signal(price)
 
     if sig == last_signal:
@@ -175,22 +141,20 @@ def webhook():
     last_signal = sig
     last_signal_time = now
 
-    log(price, sig, score)
-
-    # TELEGRAM OUTPUT
     send(
-        f"""📊 TRADINGVIEW SIGNAL
+        f"""📊 PRO EMA ENGINE
 
 Symbol: {symbol}
-TV Signal: {signal_in}
-Price: {price}
-Time: {timestamp}
+TV Signal: {tv_signal}
 
-Engine Result: {sig}
+Price: {price}
+EMA9/EMA21 ACTIVE
+Structure: {market_structure(prices)}
+
+Result: {sig}
 Score: {score}
 
-Session: {session()}
-Risk: {"OK" if risk_check(price) else "BLOCKED"}
+COOLDOWN: ON
 """
     )
 
@@ -198,30 +162,12 @@ Risk: {"OK" if risk_check(price) else "BLOCKED"}
 
 
 # =========================
-# TEST ROUTE
+# TEST
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 BOT OK")
-    return "sent"
-
-
-# =========================
-# OPTIONAL MANUAL RUN
-# =========================
-@app.route("/run")
-def run():
-    price = get_price()
-
-    if not price:
-        return "no data"
-
-    sig, score = signal(price)
-    log(price, sig, score)
-
-    send(f"MANUAL RUN: {sig} | {score}")
-
-    return "sent"
+    send("🧪 EMA ENGINE ONLINE")
+    return "ok"
 
 
 # =========================
