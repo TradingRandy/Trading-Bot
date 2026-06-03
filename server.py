@@ -5,6 +5,11 @@ from flask import Flask
 
 app = Flask(__name__)
 
+# =========================
+# MEMORY (TRADING JOURNAL)
+# =========================
+trade_log = []
+
 last_signal_time = 0
 last_signal = None
 COOLDOWN = 300
@@ -43,50 +48,9 @@ def get_price():
 
 
 # =========================
-# MULTI TIMEFRAME SIMULATION
-# =========================
-def timeframe_alignment(price):
-
-    if not price:
-        return "NO_DATA"
-
-    tf_1m = price % 3
-    tf_5m = price % 7
-    tf_15m = price % 11
-
-    bullish = tf_1m < 2 and tf_5m < 4 and tf_15m < 6
-    bearish = tf_1m > 2 and tf_5m > 4 and tf_15m > 6
-
-    if bullish:
-        return "BULLISH_ALIGNMENT"
-    if bearish:
-        return "BEARISH_ALIGNMENT"
-
-    return "MIXED"
-
-
-# =========================
-# VOLATILITY REGIME
-# =========================
-def volatility_regime(price):
-
-    if not price:
-        return "UNKNOWN"
-
-    if price % 2 == 0:
-        return "TRENDING"
-
-    if price % 3 == 0:
-        return "VOLATILE"
-
-    return "RANGING"
-
-
-# =========================
-# SESSION FILTER
+# SESSION DETECTION
 # =========================
 def session():
-
     h = time.gmtime().tm_hour
 
     if 7 <= h <= 11:
@@ -97,24 +61,64 @@ def session():
 
 
 # =========================
-# SCORE ENGINE
+# SIMPLE SCORING (FROM PHASE 11)
 # =========================
-def score(tf, vol, sess):
+def score(price):
+    s = 50
 
-    s = 0
+    if price and price % 2 == 0:
+        s += 20
 
-    if tf in ["BULLISH_ALIGNMENT", "BEARISH_ALIGNMENT"]:
-        s += 50
-
-    if vol == "TRENDING":
-        s += 30
-    elif vol == "VOLATILE":
-        s -= 20
-
-    if sess in ["LONDON", "NEW_YORK"]:
+    if session() in ["LONDON", "NEW_YORK"]:
         s += 20
 
     return s
+
+
+# =========================
+# CLASSIFY SIGNAL
+# =========================
+def classify(score_value):
+
+    if score_value >= 80:
+        return "A+"
+    elif score_value >= 60:
+        return "B"
+    else:
+        return "NO_TRADE"
+
+
+# =========================
+# LOGGING ENGINE (PHASE 12 CORE)
+# =========================
+def log_trade(signal_type, score_value):
+
+    trade_log.append({
+        "time": time.time(),
+        "session": session(),
+        "signal": signal_type,
+        "score": score_value
+    })
+
+
+# =========================
+# ANALYTICS ENGINE
+# =========================
+def analytics():
+
+    if not trade_log:
+        return "NO DATA"
+
+    total = len(trade_log)
+
+    a_plus = len([t for t in trade_log if t["signal"] == "A+"])
+    b = len([t for t in trade_log if t["signal"] == "B"])
+
+    return {
+        "total_signals": total,
+        "a_plus_ratio": round(a_plus / total * 100, 2),
+        "b_ratio": round(b / total * 100, 2),
+    }
 
 
 # =========================
@@ -122,11 +126,11 @@ def score(tf, vol, sess):
 # =========================
 @app.route("/")
 def home():
-    return "PHASE 11 MANUAL ACTIVE"
+    return "PHASE 12 INTELLIGENCE ACTIVE"
 
 
 # =========================
-# SIGNAL ENGINE
+# RUN SIGNAL ENGINE
 # =========================
 @app.route("/run")
 def run():
@@ -144,35 +148,36 @@ def run():
         send("❌ NO DATA")
         return "no data"
 
-    tf = timeframe_alignment(price)
-    vol = volatility_regime(price)
-    sess = session()
+    score_value = score(price)
+    signal = classify(score_value)
 
-    score_value = score(tf, vol, sess)
-
-    if tf != "MIXED" and vol == "TRENDING" and score_value >= 80:
-        signal = "🟢 A+ INSTITUTIONAL SETUP"
-    elif score_value >= 60:
-        signal = "⚠️ B SETUP"
-    else:
-        signal = "❌ NO TRADE"
-
+    # prevent duplicates
     if signal == last_signal:
         return "duplicate"
 
     last_signal = signal
     last_signal_time = now
 
+    # LOG IT
+    log_trade(signal, score_value)
+
     send(
-        f"🏦 PHASE 11 SIGNAL\n"
-        f"TF: {tf}\n"
-        f"Volatility: {vol}\n"
-        f"Session: {sess}\n"
+        f"🏦 PHASE 12 SIGNAL\n"
+        f"Session: {session()}\n"
         f"Score: {score_value}\n"
-        f"Signal: {signal}"
+        f"Signal: {signal}\n"
+        f"Trades Logged: {len(trade_log)}"
     )
 
     return "sent"
+
+
+# =========================
+# STATS ENDPOINT (NEW)
+# =========================
+@app.route("/stats")
+def stats():
+    return analytics()
 
 
 # =========================
@@ -180,7 +185,7 @@ def run():
 # =========================
 @app.route("/test")
 def test():
-    send("🧪 PHASE 11 OK")
+    send("🧪 PHASE 12 OK")
     return "sent"
 
 
