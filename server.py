@@ -15,6 +15,12 @@ COOLDOWN    = 300    # 5 Minuten zwischen Signalen
 MAX_HISTORY = 300    # Preishistorie (brauchen mehr für MTF)
 JOURNAL_FILE = "trade_journal.json"
  
+# Trading Sessions (UTC)
+LONDON_OPEN  = 7    # 07:00 UTC
+LONDON_CLOSE = 16   # 16:00 UTC
+NY_OPEN      = 13   # 13:00 UTC
+NY_CLOSE     = 21   # 21:00 UTC
+ 
 # =========================
 # STATE
 # =========================
@@ -384,6 +390,37 @@ def get_news_sentiment():
         return {"bull_score": 0, "bear_score": 0, "net": 0, "risk": "UNKNOWN", "headlines": []}
  
  
+ 
+# =========================
+# SESSION FILTER
+# =========================
+def get_session_status():
+    """Prüft ob gerade London oder NY Session aktiv ist."""
+    hour = datetime.utcnow().hour
+ 
+    london_active = LONDON_OPEN <= hour < LONDON_CLOSE
+    ny_active     = NY_OPEN <= hour < NY_CLOSE
+    overlap       = NY_OPEN <= hour < LONDON_CLOSE  # 13:00-16:00 UTC = bestes Fenster
+ 
+    if overlap:
+        session = "OVERLAP (London+NY) 🔥"
+    elif london_active:
+        session = "LONDON 🇬🇧"
+    elif ny_active:
+        session = "NEW YORK 🇺🇸"
+    else:
+        session = "CLOSED 😴"
+ 
+    active = london_active or ny_active
+ 
+    return {
+        "active":  active,
+        "session": session,
+        "hour_utc": hour,
+        "overlap": overlap
+    }
+ 
+ 
 # =========================
 # SCORE ENGINE (0–100%)
 # =========================
@@ -612,6 +649,7 @@ def build_telegram_message(result, price, symbol, timestamp, sl_tp):
     mtf       = result["mtf"]
     news      = result["news"]
  
+    session = get_session_status()
     grade = "🏆 A+" if score >= 90 else ("✅ A" if score >= 80 else "⚠️ B")
     direction_emoji = "📈 LONG" if direction == "LONG" else "📉 SHORT"
     filled = int(score / 10)
@@ -638,6 +676,7 @@ def build_telegram_message(result, price, symbol, timestamp, sl_tp):
  
 💰 <b>Preis:</b> {price}
 ⏱ <b>Zeit:</b> {timestamp}
+🕐 <b>Session:</b> {session['session']}
  
 🎯 <b>Trade-Parameter</b>
   Stop-Loss:   {sl_tp['sl']}
@@ -689,6 +728,7 @@ def build_telegram_message(result, price, symbol, timestamp, sl_tp):
 def status_route():
     bars    = len(price_history)
     bars_5m = len(price_history_5m)
+    session = get_session_status()
     return jsonify({
         "price_bars_1m": bars,
         "price_bars_5m": bars_5m,
@@ -697,6 +737,7 @@ def status_route():
         "ema_status":    "✅ Bereit" if bars >= 52 else f"⏳ Warte auf {52 - bars} Punkte",
         "mtf_status":    "✅ Bereit" if bars_5m >= 52 else f"⏳ Warte auf {52 - bars_5m} Punkte",
         "min_score":     f"{MIN_SCORE}%",
+        "session":       session,
         "stats":         get_stats()
     })
  
@@ -726,6 +767,15 @@ def webhook():
  
     if price <= 0:
         return jsonify({"error": "Ungültiger Preis"}), 400
+ 
+    # Session Filter
+    session = get_session_status()
+    if not session["active"]:
+        return jsonify({
+            "status":  "outside_session",
+            "session": session["session"],
+            "message": "Kein Trading ausserhalb London/NY Session"
+        })
  
     now = time.time()
     if now - last_signal_time < COOLDOWN:
