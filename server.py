@@ -47,43 +47,32 @@ load_journal()
  
  
 # =========================
-# HISTORISCHE DATEN LADEN (Finnhub)
+# HISTORISCHE DATEN LADEN (Yahoo Finance)
 # =========================
 def load_historical_prices():
-    """Lädt die letzten 200 1-Minuten-Kerzen von Finnhub beim Start."""
-    api_key = os.environ.get("NEWS_API_KEY")
-    if not api_key:
-        print("[HISTORY] Kein API-Key → überspringe historische Daten")
-        return
- 
+    """Lädt die letzten 200 5-Minuten-Kerzen von Yahoo Finance beim Start."""
     try:
-        import time as t
-        now = int(t.time())
-        from_ts = now - (60 * 220)  # 220 Minuten zurück
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1m&range=1d"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10).json()
  
-        url = (
-            f"https://finnhub.io/api/v1/forex/candle"
-            f"?symbol=OANDA:XAU_USD&resolution=1"
-            f"&from={from_ts}&to={now}&token={api_key}"
+        closes = (
+            resp.get("chart", {})
+                .get("result", [{}])[0]
+                .get("indicators", {})
+                .get("quote", [{}])[0]
+                .get("close", [])
         )
-        resp = requests.get(url, timeout=10).json()
  
-        if resp.get("s") != "ok":
-            print(f"[HISTORY] Finnhub Antwort: {resp.get('s')} → versuche alternative")
-            url2 = (
-                f"https://finnhub.io/api/v1/forex/candle"
-                f"?symbol=FXCM:XAU/USD&resolution=1"
-                f"&from={from_ts}&to={now}&token={api_key}"
-            )
-            resp = requests.get(url2, timeout=10).json()
+        # None-Werte rausfiltern
+        closes = [float(p) for p in closes if p is not None]
  
-        closes = resp.get("c", [])
-        if closes:
+        if len(closes) >= 52:
             for price in closes[-200:]:
-                price_history.append(float(price))
+                price_history.append(price)
             print(f"[HISTORY] ✅ {len(closes)} Preispunkte geladen → EMA sofort bereit")
         else:
-            print("[HISTORY] Keine Daten erhalten → Bot wartet auf Live-Preise")
+            print(f"[HISTORY] Nur {len(closes)} Punkte → warte auf Live-Preise")
  
     except Exception as e:
         print(f"[HISTORY] Fehler: {e}")
@@ -679,4 +668,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"[BOT] XAUUSD Bot startet auf Port {port}")
     app.run(host="0.0.0.0", port=port)
- 
