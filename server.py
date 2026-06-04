@@ -27,6 +27,7 @@ NY_CLOSE     = 21   # 21:00 UTC
 price_history    = []   # 1m Kerzen
 price_history_5m = []   # 5m Kerzen (für MTF)
 trade_log        = []
+open_trades      = []   # Offene Trades die noch SL/TP nicht erreicht haben
 last_signal_time = 0
 last_signal      = None
  
@@ -627,12 +628,17 @@ def get_stats():
     shorts  = [t for t in valid if t.get("direction") == "SHORT"]
     scores  = [t.get("score", 0) for t in valid]
     avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+    wl = get_win_loss_stats() if trade_log else {}
     return {
-        "trades": len(valid),
-        "avg_score": avg_score,
-        "longs": len(longs),
-        "shorts": len(shorts),
-        "blocked": len(blocked)
+        "trades":       len(valid),
+        "avg_score":    avg_score,
+        "longs":        len(longs),
+        "shorts":       len(shorts),
+        "blocked":      len(blocked),
+        "open_trades":  len(open_trades),
+        "winrate":      wl.get("winrate", "N/A"),
+        "total_pnl":    wl.get("total_pnl", 0),
+        "closed_trades": wl.get("closed_trades", 0)
     }
  
  
@@ -721,6 +727,97 @@ def build_telegram_message(result, price, symbol, timestamp, sl_tp):
     return msg
  
  
+ 
+# =========================
+# AUTO WIN/LOSS TRACKING
+# =========================
+def check_open_trades(current_price):
+    """
+    Prüft bei jedem neuen Preis ob offene Trades
+    ihren SL oder TP erreicht haben.
+    """
+    global open_trades
+ 
+    closed = []
+    still_open = []
+ 
+    for trade in open_trades:
+        direction = trade["direction"]
+        sl        = trade["sl"]
+        tp        = trade["tp"]
+        entry     = trade["entry_price"]
+        result    = None
+ 
+        if direction == "LONG":
+            if current_price >= tp:
+                result = "WIN"
+            elif current_price <= sl:
+                result = "LOSS"
+        elif direction == "SHORT":
+            if current_price <= tp:
+                result = "WIN"
+            elif current_price >= sl:
+                result = "LOSS"
+ 
+        if result:
+            pnl = abs(tp - entry) if result == "WIN" else -abs(sl - entry)
+            trade["result"]      = result
+            trade["close_price"] = current_price
+            trade["close_time"]  = datetime.utcnow().isoformat()
+            trade["pnl"]         = round(pnl, 2)
+            closed.append(trade)
+ 
+            # Telegram Benachrichtigung
+            emoji = "✅" if result == "WIN" else "❌"
+            send_telegram(
+                f"{emoji} <b>TRADE GESCHLOSSEN — {result}</b>\n\n"
+                f"Richtung:    {direction}\n"
+                f"Entry:       {entry}\n"
+                f"Close:       {current_price}\n"
+                f"PnL (Punkte): {'+' if pnl > 0 else ''}{pnl}\n\n"
+                f"Score war:   {trade.get('score', 'N/A')}%\n"
+                f"Session:     {trade.get('session', 'N/A')}\n"
+                f"Eröffnet:    {trade.get('open_time', 'N/A')}"
+            )
+ 
+            # Im Journal aktualisieren
+            for t in trade_log:
+                if t.get("time") == trade.get("open_time"):
+                    t["result"]      = result
+                    t["close_price"] = current_price
+                    t["pnl"]         = round(pnl, 2)
+            save_journal()
+        else:
+            still_open.append(trade)
+ 
+    open_trades = still_open
+ 
+    if closed:
+        print(f"[TRACKING] {len(closed)} Trade(s) geschlossen")
+ 
+ 
+def get_win_loss_stats():
+    """Berechnet echte Winrate aus abgeschlossenen Trades."""
+    closed = [t for t in trade_log if t.get("result") in ["WIN", "LOSS"]]
+    if not closed:
+        return {"closed_trades": 0, "wins": 0, "losses": 0, "winrate": "N/A", "total_pnl": 0}
+ 
+    wins   = [t for t in closed if t["result"] == "WIN"]
+    losses = [t for t in closed if t["result"] == "LOSS"]
+    total_pnl = round(sum(t.get("pnl", 0) for t in closed), 2)
+    winrate   = round(len(wins) / len(closed) * 100, 1)
+ 
+    return {
+        "closed_trades": len(closed),
+        "wins":          len(wins),
+        "losses":        len(losses),
+        "winrate":       f"{winrate}%",
+        "total_pnl":     total_pnl,
+        "avg_win":       round(sum(t.get("pnl",0) for t in wins)   / len(wins),   2) if wins   else 0,
+        "avg_loss":      round(sum(t.get("pnl",0) for t in losses) / len(losses), 2) if losses else 0
+    }
+ 
+ 
 # =========================
 # ROUTES
 # =========================
@@ -782,6 +879,9 @@ def webhook():
         remaining = int(COOLDOWN - (now - last_signal_time))
         return jsonify({"status": "cooldown", "remaining_seconds": remaining})
  
+    # Offene Trades prüfen bei jedem neuen Preis
+    check_open_trades(price)
+ 
     result    = calculate_score(price, tv_signal)
     score     = result["score"]
     direction = result["direction"]
@@ -808,6 +908,17 @@ def webhook():
     last_signal      = direction
     last_signal_time = now
  
+    # Trade zu open_trades hinzufügen für automatisches Tracking
+    open_trades.append({
+        "open_time":    datetime.utcnow().isoformat(),
+        "entry_price":  price,
+        "direction":    direction,
+        "sl":           sl_tp["sl"],
+        "tp":           sl_tp["tp"],
+        "score":        score,
+        "session":      get_session_status()["session"]
+    })
+ 
     return jsonify({
         "status":    "signal_sent",
         "direction": direction,
@@ -821,6 +932,23 @@ def webhook():
 @app.route("/stats")
 def stats_route():
     return jsonify(get_stats())
+ 
+ 
+@app.route("/winrate")
+def winrate_route():
+    wl = get_win_loss_stats()
+    open_list = [{
+        "direction":   t["direction"],
+        "entry":       t["entry_price"],
+        "sl":          t["sl"],
+        "tp":          t["tp"],
+        "score":       t["score"],
+        "open_time":   t["open_time"]
+    } for t in open_trades]
+    return jsonify({
+        "stats":       wl,
+        "open_trades": open_list
+    })
  
  
 @app.route("/journal")
