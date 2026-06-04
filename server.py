@@ -47,6 +47,51 @@ load_journal()
  
  
 # =========================
+# HISTORISCHE DATEN LADEN (Finnhub)
+# =========================
+def load_historical_prices():
+    """Lädt die letzten 200 1-Minuten-Kerzen von Finnhub beim Start."""
+    api_key = os.environ.get("NEWS_API_KEY")
+    if not api_key:
+        print("[HISTORY] Kein API-Key → überspringe historische Daten")
+        return
+ 
+    try:
+        import time as t
+        now = int(t.time())
+        from_ts = now - (60 * 220)  # 220 Minuten zurück
+ 
+        url = (
+            f"https://finnhub.io/api/v1/forex/candle"
+            f"?symbol=OANDA:XAU_USD&resolution=1"
+            f"&from={from_ts}&to={now}&token={api_key}"
+        )
+        resp = requests.get(url, timeout=10).json()
+ 
+        if resp.get("s") != "ok":
+            print(f"[HISTORY] Finnhub Antwort: {resp.get('s')} → versuche alternative")
+            url2 = (
+                f"https://finnhub.io/api/v1/forex/candle"
+                f"?symbol=FXCM:XAU/USD&resolution=1"
+                f"&from={from_ts}&to={now}&token={api_key}"
+            )
+            resp = requests.get(url2, timeout=10).json()
+ 
+        closes = resp.get("c", [])
+        if closes:
+            for price in closes[-200:]:
+                price_history.append(float(price))
+            print(f"[HISTORY] ✅ {len(closes)} Preispunkte geladen → EMA sofort bereit")
+        else:
+            print("[HISTORY] Keine Daten erhalten → Bot wartet auf Live-Preise")
+ 
+    except Exception as e:
+        print(f"[HISTORY] Fehler: {e}")
+ 
+load_historical_prices()
+ 
+ 
+# =========================
 # TELEGRAM
 # =========================
 def send_telegram(msg):
@@ -511,6 +556,19 @@ def build_telegram_message(result, price, symbol, timestamp, sl_tp):
 # =========================
 # ROUTES
 # =========================
+@app.route("/status")
+def status_route():
+    bars = len(price_history)
+    ema_ready = bars >= 52
+    return jsonify({
+        "price_bars": bars,
+        "ema_ready": ema_ready,
+        "ema_status": "✅ Bereit" if ema_ready else f"⏳ Warte auf {52 - bars} weitere Preispunkte",
+        "min_score": f"{MIN_SCORE}%",
+        "stats": get_stats()
+    })
+ 
+ 
 @app.route("/")
 def home():
     stats = get_stats()
@@ -621,3 +679,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"[BOT] XAUUSD Bot startet auf Port {port}")
     app.run(host="0.0.0.0", port=port)
+ 
