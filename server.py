@@ -562,12 +562,6 @@ def webhook():
  
     # Score-Filter
     if score < MIN_SCORE:
-        send_telegram(
-            f"⏸ <b>KEIN SIGNAL</b> — Score zu niedrig\n"
-            f"Score: {score}% (Min: {MIN_SCORE}%)\n"
-            f"Richtung wäre: {direction}\n"
-            f"Preis: {price}"
-        )
         return jsonify({"status": "blocked", "score": score, "min": MIN_SCORE})
  
     # Duplikat-Check
@@ -627,4 +621,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"[BOT] XAUUSD Bot startet auf Port {port}")
     app.run(host="0.0.0.0", port=port)
- 
