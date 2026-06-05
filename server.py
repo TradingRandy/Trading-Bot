@@ -998,6 +998,25 @@ def analysis_route():
     return jsonify(result)
  
  
+@app.route("/news_debug")
+def news_debug():
+    api_key = os.environ.get("NEWS_API_KEY")
+    if not api_key:
+        return jsonify({"error": "Kein API Key"})
+    try:
+        url = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
+        data = requests.get(url, timeout=10).json()
+        headlines = [n.get("headline","") for n in data[:10]]
+        sentiment = get_news_sentiment()
+        return jsonify({
+            "total_articles": len(data),
+            "first_10_headlines": headlines,
+            "sentiment": sentiment
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
+ 
+ 
 @app.route("/test")
 def test_route():
     send_telegram("🧪 <b>XAUUSD BOT ONLINE</b>\nAlle Systeme aktiv ✅")
