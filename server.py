@@ -100,11 +100,6 @@ def load_historical_prices():
  
 load_historical_prices()
  
-# News beim Start vorladen
-print("[STARTUP] Lade News beim Start...")
-_startup_news = get_news_sentiment()
-print(f"[STARTUP] News: bull={_startup_news.get('bull_score',0)} bear={_startup_news.get('bear_score',0)} risk={_startup_news.get('risk','?')}")
- 
  
 # =========================
 # TELEGRAM
@@ -848,6 +843,13 @@ def get_win_loss_stats():
         "avg_loss":      round(sum(t.get("pnl",0) for t in losses) / len(losses), 2) if losses else 0
     }
  
+ 
+# =========================
+# STARTUP NEWS PRELOAD
+# =========================
+print("[STARTUP] Lade News beim Start...")
+_startup_news = get_news_sentiment()
+print(f"[STARTUP] News: bull={_startup_news.get('bull_score',0)} bear={_startup_news.get('bear_score',0)} risk={_startup_news.get('risk','?')}")
  
 # =========================
 # ROUTES
