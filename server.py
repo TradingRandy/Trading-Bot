@@ -30,6 +30,9 @@ trade_log        = []
 open_trades      = []   # Offene Trades die noch SL/TP nicht erreicht haben
 last_signal_time = 0
 last_signal      = None
+news_cache       = None   # Gecachte News
+news_cache_time  = 0      # Zeitstempel des letzten News-Fetches
+NEWS_CACHE_TTL   = 600    # News alle 10 Minuten updaten
  
  
 # =========================
@@ -339,12 +342,18 @@ def get_volatility():
 # NEWS SENTIMENT (Finnhub)
 # =========================
 def get_news_sentiment():
+    global news_cache, news_cache_time
+ 
+    # Cache prüfen — nur alle 10 Minuten neu laden
+    if news_cache and (time.time() - news_cache_time) < NEWS_CACHE_TTL:
+        return news_cache
+ 
     api_key = os.environ.get("NEWS_API_KEY")
     if not api_key:
         return {"bull_score": 0, "bear_score": 0, "net": 0, "risk": "UNKNOWN", "headlines": []}
     try:
         url  = f"https://finnhub.io/api/v1/news?category=general&token={api_key}"
-        data = requests.get(url, timeout=6).json()
+        data = requests.get(url, timeout=10).json()
  
         bullish_words  = ["rate cut", "fed dovish", "safe haven", "gold rally",
                           "gold climbs", "gold rises", "gold jumps", "gold gains",
@@ -387,7 +396,7 @@ def get_news_sentiment():
  
         risk = "HIGH" if high_impact_count >= 3 else ("MEDIUM" if high_impact_count >= 1 else "LOW")
  
-        return {
+        result = {
             "bull_score": bull_score,
             "bear_score": bear_score,
             "net": bull_score - bear_score,
@@ -395,8 +404,16 @@ def get_news_sentiment():
             "high_impact": high_impact_count,
             "headlines": relevant_headlines
         }
+        # Cache speichern
+        news_cache      = result
+        news_cache_time = time.time()
+        print(f"[NEWS] ✅ bull:{bull_score} bear:{bear_score} risk:{risk} headlines:{len(relevant_headlines)}")
+        return result
     except Exception as e:
         print(f"[NEWS] Fehler: {e}")
+        # Alten Cache zurückgeben falls vorhanden
+        if news_cache:
+            return news_cache
         return {"bull_score": 0, "bear_score": 0, "net": 0, "risk": "UNKNOWN", "headlines": []}
  
  
