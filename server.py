@@ -347,12 +347,21 @@ def get_news_sentiment():
         data = requests.get(url, timeout=6).json()
  
         bullish_words  = ["rate cut", "fed dovish", "safe haven", "gold rally",
-                          "inflation", "dollar weak", "risk off", "uncertainty",
-                          "recession", "geopolitic", "war", "crisis"]
-        bearish_words  = ["rate hike", "fed hawkish", "dollar strong", "risk on",
-                          "gold sell", "taper", "yields rise", "strong economy"]
+                          "gold climbs", "gold rises", "gold jumps", "gold gains",
+                          "inflation", "dollar weak", "dollar slips", "dollar falls",
+                          "risk off", "uncertainty", "recession", "geopolitic",
+                          "war", "crisis", "ceasefire", "conflict", "attack",
+                          "middle east", "iran", "hezbollah", "hostilities",
+                          "yields fall", "bond yields fall", "haven demand",
+                          "rate cut", "easing", "stimulus"]
+        bearish_words  = ["rate hike", "fed hawkish", "dollar strong", "dollar rises",
+                          "risk on", "gold slips", "gold falls", "gold drops",
+                          "gold sell", "taper", "yields rise", "strong economy",
+                          "peace deal", "iran deal", "ceasefire deal", "war ends",
+                          "higher rates", "rate increase"]
         high_impact    = ["CPI", "NFP", "Fed", "interest rate", "FOMC", "Powell",
-                          "GDP", "unemployment", "payroll"]
+                          "GDP", "unemployment", "payroll", "BOJ", "ECB", "RBI",
+                          "rate decision", "inflation data", "jobs report"]
  
         bull_score = bear_score = high_impact_count = 0
         relevant_headlines = []
