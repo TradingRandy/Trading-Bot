@@ -34,6 +34,11 @@ news_cache       = None   # Gecachte News
 news_cache_time  = 0      # Zeitstempel des letzten News-Fetches
 NEWS_CACHE_TTL   = 600    # News alle 10 Minuten updaten
  
+# Wirtschaftskalender Cache
+calendar_cache     = None
+calendar_cache_time = 0
+CALENDAR_TTL       = 3600  # Kalender jede Stunde updaten
+ 
  
 # =========================
 # TRADE JOURNAL (Persistent)
@@ -466,14 +471,16 @@ def calculate_score(price, tv_signal=""):
     """
     update_price(price)
  
-    ema   = get_ema_signal()
-    rsi   = get_rsi_signal()
-    macd  = get_macd_signal()
-    mtf   = get_mtf_signal()
-    struct = get_structure()
-    sweep  = get_liquidity(price)
-    vol    = get_volatility()
-    news   = get_news_sentiment()
+    ema      = get_ema_signal()
+    rsi      = get_rsi_signal()
+    macd     = get_macd_signal()
+    mtf      = get_mtf_signal()
+    struct   = get_structure()
+    sweep    = get_liquidity(price)
+    vol      = get_volatility()
+    news     = get_news_sentiment()
+    calendar = get_economic_calendar()
+    sr       = get_support_resistance(price)
  
     breakdown = {}
     total     = 0
@@ -564,6 +571,22 @@ def calculate_score(price, tv_signal=""):
     breakdown["Liquiditaet"] = sweep_pts
     total += sweep_pts
  
+    # --- SUPPORT & RESISTANCE (10 Punkte) ---
+    sr_pts = 0
+    if sr["near_level"]:
+        if sr["type"] == "support" and direction == "LONG":
+            sr_pts = 10   # Preis an Support + LONG = perfekt
+        elif sr["type"] == "resistance" and direction == "SHORT":
+            sr_pts = 10   # Preis an Resistance + SHORT = perfekt
+        elif sr["type"] == "support" and direction == "SHORT":
+            sr_pts = -5   # Short an Support = riskant
+        elif sr["type"] == "resistance" and direction == "LONG":
+            sr_pts = -5   # Long an Resistance = riskant
+    else:
+        sr_pts = 3        # Kein Level in der Nähe = neutral
+    breakdown["SR_Level"] = sr_pts
+    total += sr_pts
+ 
     # --- NEWS SENTIMENT (10 Punkte) ---
     news_pts = 0
     if news["risk"] == "HIGH":
@@ -606,20 +629,22 @@ def calculate_score(price, tv_signal=""):
     total += mtf_pts
  
     # Normierung auf 0–100
-    score_pct = max(0, min(100, round((total / 125) * 100)))
+    score_pct = max(0, min(100, round((total / 135) * 100)))
  
     return {
-        "score": score_pct,
+        "score":    score_pct,
         "direction": direction,
         "breakdown": breakdown,
-        "ema": ema,
-        "rsi": rsi,
-        "macd": macd,
-        "mtf": mtf,
+        "ema":      ema,
+        "rsi":      rsi,
+        "macd":     macd,
+        "mtf":      mtf,
         "structure": struct,
-        "sweep": sweep,
+        "sweep":    sweep,
         "volatility": vol,
-        "news": news,
+        "news":     news,
+        "calendar": calendar,
+        "sr":       sr,
         "raw_total": total
     }
  
@@ -721,6 +746,7 @@ def build_telegram_message(result, price, symbol, timestamp, sl_tp):
   MACD:        {bd.get('MACD', 0)}/20
   Struktur:    {bd.get('Struktur', 0)}/15
   Liquidität:  {bd.get('Liquiditaet', 0)}/15
+  S/R Level:   {bd.get('SR_Level', 0)}/10
   News:        {bd.get('News', 0)}/10
   Volatilität: {bd.get('Volatilitaet', 0)}/10
   MTF (5m):    {bd.get('MTF_5m', 0)}/10
@@ -731,6 +757,7 @@ def build_telegram_message(result, price, symbol, timestamp, sl_tp):
   EMA Cross: {ema.get('cross', 'NONE')}
   RSI 14:  {rsi_val} → {rsi_status}
   MACD:    {macd_val} → {macd_status} ({macd_mom})
+  S/R:     {result['sr'].get('nearest_level','N/A')} ({result['sr'].get('type','N/A')}) | Dist: {result['sr'].get('distance_pct','N/A')}%
  
 🔭 <b>Multi-Timeframe (5m)</b>
   Trend:   {mtf_status}
@@ -844,6 +871,123 @@ def get_win_loss_stats():
     }
  
  
+ 
+# =========================
+# WIRTSCHAFTSKALENDER
+# =========================
+def get_economic_calendar():
+    """Prüft ob ein High-Impact Event in den nächsten/letzten 30 Min stattfindet."""
+    global calendar_cache, calendar_cache_time
+ 
+    if calendar_cache and (time.time() - calendar_cache_time) < CALENDAR_TTL:
+        return calendar_cache
+ 
+    api_key = os.environ.get("NEWS_API_KEY")
+    if not api_key:
+        return {"blocked": False, "reason": None, "events": []}
+ 
+    try:
+        from datetime import datetime, timedelta
+        now   = datetime.utcnow()
+        fr    = now.strftime("%Y-%m-%d")
+        to    = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+ 
+        url  = f"https://finnhub.io/api/v1/calendar/economic?from={fr}&to={to}&token={api_key}"
+        data = requests.get(url, timeout=8).json()
+ 
+        events      = data.get("economicCalendar", [])
+        high_impact = ["CPI", "NFP", "Non-Farm", "FOMC", "Fed", "Interest Rate",
+                       "GDP", "Unemployment", "Payroll", "Inflation", "Powell"]
+ 
+        blocked       = False
+        block_reason  = None
+        upcoming      = []
+ 
+        for ev in events:
+            name   = ev.get("event", "")
+            impact = ev.get("impact", "")
+            ev_time = ev.get("time", "")
+ 
+            is_high = any(h.lower() in name.lower() for h in high_impact) or impact == "high"
+ 
+            if is_high and ev_time:
+                try:
+                    ev_dt  = datetime.strptime(ev_time[:16], "%Y-%m-%d %H:%M")
+                    diff   = (ev_dt - now).total_seconds() / 60
+ 
+                    if -30 <= diff <= 30:
+                        blocked      = True
+                        block_reason = f"{name} ({'+' if diff > 0 else ''}{int(diff)} Min)"
+ 
+                    upcoming.append({
+                        "event":  name,
+                        "time":   ev_time,
+                        "impact": impact,
+                        "in_min": round(diff)
+                    })
+                except:
+                    pass
+ 
+        result = {
+            "blocked": blocked,
+            "reason":  block_reason,
+            "events":  upcoming[:5]
+        }
+ 
+        calendar_cache      = result
+        calendar_cache_time = time.time()
+        print(f"[CALENDAR] Events: {len(upcoming)} | Blocked: {blocked}")
+        return result
+ 
+    except Exception as e:
+        print(f"[CALENDAR] Fehler: {e}")
+        return {"blocked": False, "reason": None, "events": []}
+ 
+ 
+# =========================
+# SUPPORT & RESISTANCE
+# =========================
+def get_support_resistance(price):
+    """
+    Berechnet S&R Levels aus den letzten 100 Kerzen.
+    Gibt zurück ob Preis in der Nähe eines Levels ist.
+    """
+    if len(price_history) < 20:
+        return {"near_level": False, "nearest_level": None, "type": None, "distance_pct": None}
+ 
+    data = price_history[-100:]
+ 
+    # Pivot Highs und Lows finden
+    levels = []
+    for i in range(2, len(data) - 2):
+        # Pivot High
+        if data[i] > data[i-1] and data[i] > data[i-2] and data[i] > data[i+1] and data[i] > data[i+2]:
+            levels.append(("resistance", data[i]))
+        # Pivot Low
+        if data[i] < data[i-1] and data[i] < data[i-2] and data[i] < data[i+1] and data[i] < data[i+2]:
+            levels.append(("support", data[i]))
+ 
+    if not levels:
+        return {"near_level": False, "nearest_level": None, "type": None, "distance_pct": None}
+ 
+    # Nächstes Level zum aktuellen Preis finden
+    nearest     = min(levels, key=lambda x: abs(x[1] - price))
+    level_type  = nearest[0]
+    level_price = nearest[1]
+    distance    = abs(price - level_price) / price * 100
+ 
+    # "In der Nähe" = innerhalb 0.3%
+    near = distance <= 0.3
+ 
+    return {
+        "near_level":     near,
+        "nearest_level":  round(level_price, 2),
+        "type":           level_type,
+        "distance_pct":   round(distance, 4),
+        "all_levels":     [(t, round(p, 2)) for t, p in levels[-6:]]
+    }
+ 
+ 
 # =========================
 # STARTUP NEWS PRELOAD
 # =========================
@@ -907,6 +1051,20 @@ def webhook():
             "message": "Kein Trading ausserhalb London/NY Session"
         })
  
+    # Wirtschaftskalender Filter
+    calendar = get_economic_calendar()
+    if calendar["blocked"]:
+        send_telegram(
+            f"⚠️ <b>BOT PAUSIERT — High-Impact Event</b>\n\n"
+            f"Event: {calendar['reason']}\n"
+            f"Kein Trading bis 30 Min nach dem Event."
+        )
+        return jsonify({
+            "status":  "calendar_blocked",
+            "reason":  calendar["reason"],
+            "message": "High-Impact Event aktiv — kein Trading"
+        })
+ 
     now = time.time()
     if now - last_signal_time < COOLDOWN:
         remaining = int(COOLDOWN - (now - last_signal_time))
@@ -965,6 +1123,157 @@ def webhook():
 @app.route("/stats")
 def stats_route():
     return jsonify(get_stats())
+ 
+ 
+@app.route("/backtest")
+def backtest_route():
+    """
+    Echter Backtest mit Yahoo Finance Daten.
+    Simuliert die Bot-Logik auf historischen Daten.
+    """
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        # 2 Jahre 1-Tages-Daten
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1d&range=2y"
+        resp = requests.get(url, headers=headers, timeout=15).json()
+ 
+        closes = (
+            resp.get("chart", {})
+                .get("result", [{}])[0]
+                .get("indicators", {})
+                .get("quote", [{}])[0]
+                .get("close", [])
+        )
+        timestamps = (
+            resp.get("chart", {})
+                .get("result", [{}])[0]
+                .get("timestamps", [])
+        )
+ 
+        closes = [float(p) for p in closes if p is not None]
+ 
+        if len(closes) < 60:
+            return jsonify({"error": "Nicht genug Daten"})
+ 
+        wins = losses = total_trades = 0
+        total_pnl   = 0
+        monthly     = {}
+        max_dd      = 0
+        peak        = closes[0]
+        equity      = 10000
+        equity_curve = []
+ 
+        for i in range(55, len(closes) - 5):
+            hist      = closes[max(0, i-100):i]
+            price     = closes[i]
+            ema20     = sum(hist[-20:]) / 20 if len(hist) >= 20 else None
+            ema50     = sum(hist[-50:]) / 50 if len(hist) >= 50 else None
+ 
+            if not ema20 or not ema50:
+                continue
+ 
+            # Einfache Strategie-Simulation
+            if ema20 > ema50 and price > ema20:
+                direction = "LONG"
+            elif ema20 < ema50 and price < ema20:
+                direction = "SHORT"
+            else:
+                continue
+ 
+            # ATR für SL/TP
+            ranges  = [abs(hist[-j] - hist[-j-1]) for j in range(1, 14) if j+1 < len(hist)]
+            atr     = sum(ranges) / len(ranges) if ranges else price * 0.002
+            sl_dist = atr * 1.5
+            tp_dist = atr * 2.5
+ 
+            # Simuliere nächste 5 Tage
+            hit = None
+            for j in range(1, 6):
+                if i + j >= len(closes):
+                    break
+                future = closes[i + j]
+                if direction == "LONG":
+                    if future >= price + tp_dist:
+                        hit = "WIN"
+                        break
+                    if future <= price - sl_dist:
+                        hit = "LOSS"
+                        break
+                else:
+                    if future <= price - tp_dist:
+                        hit = "WIN"
+                        break
+                    if future >= price + sl_dist:
+                        hit = "LOSS"
+                        break
+ 
+            if not hit:
+                continue
+ 
+            total_trades += 1
+            pnl = tp_dist if hit == "WIN" else -sl_dist
+ 
+            if hit == "WIN":
+                wins += 1
+                total_pnl += pnl
+                equity    += pnl
+            else:
+                losses += 1
+                total_pnl -= sl_dist
+                equity    -= sl_dist
+ 
+            # Drawdown
+            if equity > peak:
+                peak = equity
+            dd = (peak - equity) / peak * 100
+            if dd > max_dd:
+                max_dd = dd
+ 
+            equity_curve.append(round(equity, 2))
+ 
+            # Monatlich gruppieren
+            if timestamps and i < len(timestamps):
+                month = datetime.utcfromtimestamp(timestamps[i]).strftime("%Y-%m")
+                if month not in monthly:
+                    monthly[month] = {"wins": 0, "losses": 0, "pnl": 0}
+                monthly[month]["wins" if hit == "WIN" else "losses"] += 1
+                monthly[month]["pnl"] = round(monthly[month]["pnl"] + pnl, 2)
+ 
+        winrate = round(wins / total_trades * 100, 1) if total_trades > 0 else 0
+ 
+        # Bester und schlechtester Monat
+        best_month  = max(monthly.items(), key=lambda x: x[1]["pnl"]) if monthly else None
+        worst_month = min(monthly.items(), key=lambda x: x[1]["pnl"]) if monthly else None
+ 
+        return jsonify({
+            "zeitraum":        "2 Jahre (tägliche Daten)",
+            "total_trades":    total_trades,
+            "wins":            wins,
+            "losses":          losses,
+            "winrate":         f"{winrate}%",
+            "total_pnl_pts":   round(total_pnl, 2),
+            "max_drawdown":    f"{round(max_dd, 1)}%",
+            "start_kapital":   10000,
+            "end_kapital":     round(equity, 2),
+            "bester_monat":    {best_month[0]: best_month[1]} if best_month else None,
+            "schlechtester_monat": {worst_month[0]: worst_month[1]} if worst_month else None,
+            "note":            "Simulation basiert auf EMA20/50 Crossover Strategie"
+        })
+ 
+    except Exception as e:
+        return jsonify({"error": str(e)})
+ 
+ 
+@app.route("/calendar")
+def calendar_route():
+    cal = get_economic_calendar()
+    return jsonify(cal)
+ 
+ 
+@app.route("/sr")
+def sr_route():
+    price = float(request.args.get("price", price_history[-1] if price_history else 0))
+    return jsonify(get_support_resistance(price))
  
  
 @app.route("/winrate")
@@ -1030,3 +1339,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"[BOT] XAUUSD Bot startet auf Port {port}")
     app.run(host="0.0.0.0", port=port)
+ 
