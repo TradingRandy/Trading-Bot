@@ -1134,7 +1134,10 @@ def backtest_route():
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         # 2 Jahre 1-Tages-Daten
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1d&range=2y"
+        years = request.args.get("years", "2")
+        valid_ranges = {"1": "1y", "2": "2y", "3": "5y", "4": "5y", "5": "5y", "6": "10y", "7": "10y", "8": "10y", "9": "10y", "10": "10y"}
+        yrange = valid_ranges.get(years, "2y")
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1d&range={yrange}"
         resp = requests.get(url, headers=headers, timeout=15).json()
  
         closes = (
@@ -1246,7 +1249,7 @@ def backtest_route():
         worst_month = min(monthly.items(), key=lambda x: x[1]["pnl"]) if monthly else None
  
         return jsonify({
-            "zeitraum":        "2 Jahre (tägliche Daten)",
+            "zeitraum":        f"{years} Jahre (tägliche Daten)",
             "total_trades":    total_trades,
             "wins":            wins,
             "losses":          losses,
